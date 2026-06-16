@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>Rackoon Tycoon 🦝 — Build your cloud empire</title>
+    <meta
+      name="description"
+      content="Rackoon Tycoon — an AWS Solutions Architect study guide reborn as a Factorio-meets-RollerCoaster-Tycoon browser game."
+    />
+    <style>
+      /* ---- Page chrome. The game itself is drawn on the canvas. ---- */
+      :root {
+        --bg: #11161d;
+        --accent: #ffb347;
+        --text: #e8edf2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--text);
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      #game {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        /* Prevent the canvas from being a text-select / drag target. */
+        cursor: default;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      /* Loading splash shown until the ES modules finish booting. */
+      #splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: radial-gradient(
+          circle at 50% 40%,
+          #1a212b 0%,
+          #0c1014 70%
+        );
+        z-index: 10;
+      }
+      #splash .mark {
+        font-size: 64px;
+        animation: bob 1.6s ease-in-out infinite;
+      }
+      #splash .name {
+        font-weight: 800;
+        font-size: 28px;
+        letter-spacing: 0.5px;
+      }
+      #splash .name span {
+        color: var(--accent);
+      }
+      #splash .tag {
+        color: #9fb0c0;
+        font-size: 14px;
+      }
+      #splash .hint {
+        margin-top: 8px;
+        color: #5e6e7e;
+        font-size: 12px;
+      }
+      @keyframes bob {
+        0%,
+        100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-10px);
+        }
+      }
+      /* Graceful message if JS modules can't load (e.g. opened via file://). */
+      #nojs {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+        background: #0c1014;
+        color: #e8edf2;
+        z-index: 20;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <!-- Loading splash (hidden by main.js once running). -->
+    <div id="splash">
+      <div class="mark">🦝</div>
+      <div class="name">Rackoon <span>Tycoon</span></div>
+      <div class="tag">Build your cloud empire. Tame the traffic.</div>
+      <div class="hint">loading…</div>
+    </div>
+
+    <!-- Shown only if module scripts fail to run. -->
+    <div id="nojs">
+      <div>
+        <strong>Rackoon Tycoon needs a local web server.</strong><br />
+        ES modules don't load from <code>file://</code>. Run:<br /><br />
+        <code>python3 -m http.server 8000</code><br />
+        then open <code>http://localhost:8000/game/game.html</code>
+      </div>
+    </div>
+
+    <!--
+      Entry point. type="module" gives us native ES module imports with zero
+      bundler and zero runtime dependencies. Path is relative so it works under
+      any static server / subpath.
+    -->
+    <script type="module" src="./src/main.js"></script>
+
+    <!--
+      If the module above fails to execute (older browser / file:// scheme),
+      reveal the help message. A successful boot hides #splash, so we only show
+      #nojs when the splash is still visible after a short grace period.
+    -->
+    <script>
+      setTimeout(function () {
+        var splash = document.getElementById("splash");
+        if (splash && splash.style.display !== "none") {
+          // Modules likely failed to load; show guidance.
+          document.getElementById("nojs").style.display = "flex";
+        }
+      }, 2500);
+    </script>
+  </body>
+</html>
