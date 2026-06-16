@@ -6,6 +6,7 @@
 import { PALETTE } from "../theme.js";
 import { Grid, TILE } from "../grid/grid.js";
 import { drawService, roundRect } from "./sprites.js";
+import { AZ_COUNT, zoneColumnRange, AZ_LABELS } from "../waves/events.js";
 
 // Draw the dark workshop floor + grid lines, only across the grid bounds.
 export function drawFloor(ctx, grid, time) {
@@ -99,16 +100,115 @@ function nub(ctx, c, r) {
   ctx.fill();
 }
 
-// Draw every building.
-export function drawBuildings(ctx, grid) {
+// Draw every building, including the Phase-2 overload heat ring + offline state.
+export function drawBuildings(ctx, grid, time = 0) {
   for (const b of grid.buildings.values()) {
     const cx = b.col * TILE + TILE / 2;
     const cy = b.row * TILE + TILE / 2;
+
+    // Overload heat: a ring whose color ramps green -> amber -> red with load,
+    // so bottlenecks are visible at a glance (T2.2).
+    const heat = b.heat || 0;
+    if (heat > 0.18 && !b.disabled) {
+      const col = heatColor(heat);
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.9, 0.3 + heat * 0.5);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 3;
+      const pr = TILE * 0.42 + (heat > 1 ? Math.sin(time * 8) * 2 : 0);
+      ctx.beginPath();
+      ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+      ctx.stroke();
+      // A soft glow under heavy load.
+      if (heat > 0.8) {
+        ctx.globalAlpha = (heat - 0.8) * 0.5;
+        ctx.shadowColor = col;
+        ctx.shadowBlur = 22;
+        ctx.beginPath();
+        ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     drawService(ctx, b.service, cx, cy, {
-      bob: b.bob,
+      bob: b.disabled ? 0 : b.bob,
       look: { x: b.eyeTargetX, y: b.eyeTargetY },
       activity: b.activity,
+      alpha: b.disabled ? 0.32 : 1,
     });
+
+    // Offline overlay (AZ failure): dim + a red "zzz/down" mark.
+    if (b.disabled) {
+      ctx.save();
+      ctx.font = "700 16px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = PALETTE.bad;
+      ctx.fillText("⚡✕", cx, cy - TILE * 0.34);
+      ctx.restore();
+    }
+  }
+}
+
+// Green -> amber -> red ramp for load in [0, ~1.4].
+function heatColor(h) {
+  const t = Math.min(1, h);
+  // 0 -> good (green), 0.5 -> warn (amber), 1 -> bad (red).
+  if (t < 0.5) {
+    return mix(PALETTE.good, PALETTE.warn, t / 0.5);
+  }
+  return mix(PALETTE.warn, PALETTE.bad, (t - 0.5) / 0.5);
+}
+
+function mix(a, b, t) {
+  const ca = parseHex(a);
+  const cb = parseHex(b);
+  const r = Math.round(ca[0] + (cb[0] - ca[0]) * t);
+  const g = Math.round(ca[1] + (cb[1] - ca[1]) * t);
+  const bl = Math.round(ca[2] + (cb[2] - ca[2]) * t);
+  return `rgb(${r},${g},${bl})`;
+}
+function parseHex(c) {
+  let h = c.replace("#", "");
+  if (h.length === 3) h = h.split("").map((x) => x + x).join("");
+  const n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// Draw the Availability-Zone bands behind the buildings: faint vertical column
+// regions with a label, and a red wash over any failed zone (T2.3). `failed` is
+// a Set of failed zone indices.
+export function drawAZBands(ctx, grid, failed, time) {
+  const h = grid.worldHeight();
+  for (let z = 0; z < AZ_COUNT; z++) {
+    const [c0, c1] = zoneColumnRange(z, grid.cols);
+    const x = c0 * TILE;
+    const w = (c1 - c0 + 1) * TILE;
+    const down = failed && failed.has(z);
+
+    // Subtle zone separator tint (alternating) so the bands read as zones.
+    ctx.save();
+    ctx.globalAlpha = down ? 1 : 0.5;
+    ctx.fillStyle = down
+      ? "rgba(255,94,94," + (0.12 + Math.abs(Math.sin(time * 3)) * 0.08) + ")"
+      : z % 2 === 0
+        ? "rgba(72,202,228,0.020)"
+        : "rgba(255,179,71,0.018)";
+    ctx.fillRect(x, 0, w, h);
+
+    // Zone label, top of the band.
+    ctx.globalAlpha = down ? 0.95 : 0.4;
+    ctx.fillStyle = down ? PALETTE.bad : PALETTE.textFaint;
+    ctx.font = "600 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText(
+      (down ? "✕ " : "") + (AZ_LABELS[z] || "AZ " + z),
+      x + w / 2,
+      6
+    );
+    ctx.restore();
   }
 }
 

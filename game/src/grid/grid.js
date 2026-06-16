@@ -22,6 +22,14 @@ export class Building {
     this.eyeTargetY = 0;
     // Visual pulse when a packet visits (set by sim, decays in render).
     this.activity = 0;
+    // Phase-2 runtime state (set by the load model / event director each tick;
+    // read by the renderer + tooltips). Safe defaults so Phase-1 paths still work.
+    this.load = 0; // demand/capacity pressure (0 healthy, >1 overloaded)
+    this.heat = 0; // eased load, drives the overload tint
+    this.queue = 0; // backed-up requests
+    this.latencyMs = service.latency; // live latency (rises with the queue)
+    this.dropping = false; // shedding requests this tick?
+    this.disabled = false; // offline (e.g. its AZ failed)
   }
 }
 

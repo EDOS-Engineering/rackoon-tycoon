@@ -6,11 +6,19 @@ import { Scene } from "../engine/scene.js";
 import { PALETTE, FONT, BRAND } from "../theme.js";
 import { drawRaccoon, roundRect } from "../render/sprites.js";
 import { load } from "../save/storage.js";
+import { LEVEL_ORDER, FIRST_LEVEL, getLevel } from "../levels/levels.js";
+import { isUnlocked, bestFor, totalStars } from "../save/progress.js";
 
 export class TitleScene extends Scene {
   enter() {
     this.t = 0;
     this.best = load("bestRouted", 0);
+    this.totalStars = totalStars();
+    // "Continue" target: the furthest unlocked level (else the intro).
+    this.continueId = FIRST_LEVEL;
+    for (const id of LEVEL_ORDER) {
+      if (isUnlocked(id, FIRST_LEVEL)) this.continueId = id;
+    }
     // Floating background sparks (decorative "guests").
     this.sparks = [];
     for (let i = 0; i < 36; i++) {
@@ -23,6 +31,7 @@ export class TitleScene extends Scene {
       });
     }
     this._btn = { x: 0, y: 0, w: 0, h: 0 };
+    this._levelBtns = []; // filled during render
   }
 
   update(dt) {
@@ -34,11 +43,27 @@ export class TitleScene extends Scene {
       if (s.x > 1.1) s.x -= 1.2;
     }
 
-    // Hit-test Play button.
+    // Hit-test the level-select chips (only unlocked are clickable).
+    if (input.leftDown) {
+      for (const lb of this._levelBtns) {
+        if (
+          lb.unlocked &&
+          input.x >= lb.x &&
+          input.x <= lb.x + lb.w &&
+          input.y >= lb.y &&
+          input.y <= lb.y + lb.h
+        ) {
+          this.game.scenes.go("level", { levelId: lb.id });
+          return;
+        }
+      }
+    }
+
+    // Hit-test Play / Continue button.
     const over = this._overBtn(input.x, input.y);
     this._hot = over;
     if ((over && input.leftDown) || input.pressed("Enter") || input.pressed("Space")) {
-      this.game.scenes.go("level", { levelId: "first_light" });
+      this.game.scenes.go("level", { levelId: this.continueId });
     }
   }
 
@@ -132,20 +157,84 @@ export class TitleScene extends Scene {
     ctx.fillStyle = "#1a120a";
     ctx.font = "800 24px system-ui, sans-serif";
     ctx.textBaseline = "middle";
-    ctx.fillText("▶  PLAY", cx, by + bh / 2 + 1);
+    const playLabel = this.continueId === FIRST_LEVEL ? "▶  PLAY" : "▶  CONTINUE";
+    ctx.fillText(playLabel, cx, by + bh / 2 + 1);
     ctx.textBaseline = "alphabetic";
+
+    // Level-select strip (campaign progress + unlocks).
+    this._renderLevelSelect(ctx, cx, by + bh + 26, W);
 
     // Best score + role flavor.
     ctx.fillStyle = PALETTE.textFaint;
     ctx.font = FONT.uiSmall;
-    if (this.best > 0) {
-      ctx.fillText("Best routed this machine: " + this.best, cx, by + bh + 28);
+    ctx.textAlign = "center";
+    const flavor =
+      this.totalStars > 0
+        ? "Rocky's stars: " + this.totalStars + " ★   •   Best routed: " + this.best
+        : "Meet Rocky, your raccoon SRE. Build the cloud. Tame the traffic.";
+    ctx.fillText(flavor, cx, H - 20);
+  }
+
+  // A row of level chips: locked ones are dimmed and unclickable; unlocked ones
+  // show earned stars and launch on click.
+  _renderLevelSelect(ctx, cx, y, W) {
+    this._levelBtns = [];
+    const n = LEVEL_ORDER.length;
+    const cw = 168;
+    const ch = 56;
+    const gap = 12;
+    const totalW = n * cw + (n - 1) * gap;
+    let x = cx - totalW / 2;
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.font = FONT.uiSmall;
+    ctx.fillText("CAMPAIGN", cx, y - 8);
+
+    for (const id of LEVEL_ORDER) {
+      const lvl = getLevel(id);
+      const unlocked = isUnlocked(id, FIRST_LEVEL);
+      const best = bestFor(id);
+      const rect = { id, x, y: y + 4, w: cw, h: ch, unlocked };
+      this._levelBtns.push(rect);
+
+      const over =
+        unlocked &&
+        this.game.input.x >= x &&
+        this.game.input.x <= x + cw &&
+        this.game.input.y >= y + 4 &&
+        this.game.input.y <= y + 4 + ch;
+
+      ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+      ctx.globalAlpha = unlocked ? 1 : 0.45;
+      roundRect(ctx, x, y + 4, cw, ch, 10);
+      ctx.fill();
+      ctx.strokeStyle = unlocked ? "rgba(255,179,71,0.35)" : "rgba(255,255,255,0.06)";
+      ctx.lineWidth = 1;
+      roundRect(ctx, x, y + 4, cw, ch, 10);
+      ctx.stroke();
+
+      ctx.fillStyle = unlocked ? PALETTE.text : PALETTE.textFaint;
+      ctx.font = "700 13px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(unlocked ? lvl.name : "🔒 " + lvl.name, x + 12, y + 24);
+
+      // Stars earned (or a hint).
+      ctx.font = "13px system-ui, sans-serif";
+      if (best && best.stars) {
+        ctx.fillStyle = PALETTE.accent;
+        ctx.fillText("★".repeat(best.stars) + "☆".repeat(3 - best.stars), x + 12, y + 44);
+      } else if (unlocked) {
+        ctx.fillStyle = PALETTE.textFaint;
+        ctx.fillText("☆☆☆  not cleared", x + 12, y + 44);
+      } else {
+        ctx.fillStyle = PALETTE.textFaint;
+        ctx.fillText("win previous to unlock", x + 12, y + 44);
+      }
+      ctx.globalAlpha = 1;
+      x += cw + gap;
     }
-    ctx.fillText(
-      "Meet Rocky, your raccoon SRE. Build the cloud. Tame the traffic.",
-      cx,
-      H - 24
-    );
+    ctx.textAlign = "center";
   }
 }
 

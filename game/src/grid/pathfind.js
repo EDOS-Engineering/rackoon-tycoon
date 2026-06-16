@@ -13,7 +13,10 @@ import { SINK_ROLES } from "../services/catalog.js";
 
 // Breadth-first search returning a map of cameFrom for path reconstruction.
 // `goalTest(key, building)` returns true when `key` is an acceptable goal.
-function bfs(grid, startKey, goalTest) {
+// `isBlocked(key)` (optional) lets the caller exclude tiles from routing — used
+// in Phase 2 so an AZ-failure event disables every tile in the failed zone and
+// requests must reroute around it.
+function bfs(grid, startKey, goalTest, isBlocked) {
   const cameFrom = new Map();
   cameFrom.set(startKey, null);
   const queue = [startKey];
@@ -27,10 +30,10 @@ function bfs(grid, startKey, goalTest) {
       return reconstruct(cameFrom, startKey, cur);
     }
     for (const nk of grid.neighbors(cur)) {
-      if (!cameFrom.has(nk)) {
-        cameFrom.set(nk, cur);
-        queue.push(nk);
-      }
+      if (cameFrom.has(nk)) continue;
+      if (isBlocked && nk !== startKey && isBlocked(nk)) continue;
+      cameFrom.set(nk, cur);
+      queue.push(nk);
     }
   }
   return null;
@@ -50,18 +53,24 @@ function reconstruct(cameFrom, startKey, goalKey) {
 
 // Find a full round-trip path from a gate tile, or null if no sink is reachable.
 // Returns { path: ["c,r"...], sinkKey } where path includes the return to gate.
-export function findRoundTrip(grid, gateKey) {
+// `isBlocked(key)` (optional) excludes disabled tiles (e.g. an AZ failure).
+export function findRoundTrip(grid, gateKey, isBlocked) {
   const [gc, gr] = Grid.parseKey(gateKey);
   const gate = grid.getBuilding(gc, gr);
   if (!gate) return null;
 
-  // Leg 1: gate -> nearest sink/storage.
-  const toSink = bfs(grid, gateKey, (key, b) => SINK_ROLES.has(b.service.role));
+  // Leg 1: gate -> nearest sink/storage (skipping blocked tiles).
+  const toSink = bfs(
+    grid,
+    gateKey,
+    (key, b) => SINK_ROLES.has(b.service.role),
+    isBlocked
+  );
   if (!toSink) return null;
   const sinkKey = toSink[toSink.length - 1];
 
   // Leg 2: sink -> back to this exact gate.
-  const back = bfs(grid, sinkKey, (key, b) => key === gateKey);
+  const back = bfs(grid, sinkKey, (key, b) => key === gateKey, isBlocked);
   if (!back) return null;
 
   // Stitch: drop the duplicated sink node at the seam.
@@ -71,6 +80,6 @@ export function findRoundTrip(grid, gateKey) {
 
 // Quick reachability check used by the HUD to show "topology OK?" without
 // building a full packet. Returns true if any sink is reachable from the gate.
-export function gateHasRoute(grid, gateKey) {
-  return findRoundTrip(grid, gateKey) != null;
+export function gateHasRoute(grid, gateKey, isBlocked) {
+  return findRoundTrip(grid, gateKey, isBlocked) != null;
 }
