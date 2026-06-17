@@ -1,0 +1,100 @@
+# Rackoon Tycoon — production deploy (Forge webhook, recommended path).
+#
+# Static site: zero runtime deps, NO build step, NO bundler. CI uses Node ONLY
+# to run the dev-only sim harness in tooling/ as a pre-deploy gate. Deploy itself
+# is a single POST to the Forge deploy webhook, which does `git pull` on the droplet.
+#
+# Required GitHub repository secret:
+#   FORGE_DEPLOY_WEBHOOK_URL  — Forge site → Deployment → Deploy Trigger URL
+#                               (includes its own ?token=...). Never hardcode it.
+#
+# Nothing here runs until that secret exists and this file is on `main`.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# One in-flight deploy at a time; a newer push supersedes an older queued run.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # GATE: run the dev-only headless sim harness. A failing sim blocks the deploy.
+  # ---------------------------------------------------------------------------
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The harness imports the pure sim modules under game/src; no deps to install.
+      - name: Headless simulation harness (seeded determinism + invariants)
+        run: node tooling/headless.mjs
+
+      # OPTIONAL browser smoke test (Playwright). Disabled by default because it
+      # installs a browser (~minutes) and is not required to gate a static deploy.
+      # To enable, uncomment and ensure tooling/package.json stays dev-only.
+      # - name: Browser smoke test (Playwright headless Chromium)
+      #   working-directory: tooling
+      #   run: |
+      #     npm ci
+      #     npx playwright install --with-deps chromium
+      #   # serve the repo root, then run the smoke test against it:
+      #   # (smoke.mjs expects the site served at http://localhost:8000)
+      # - name: Serve + smoke
+      #   run: |
+      #     python3 -m http.server 8000 --directory . &
+      #     sleep 2
+      #     node tooling/smoke.mjs
+
+  # ---------------------------------------------------------------------------
+  # DEPLOY: trigger Forge, then health-check the live site.
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    # Only deploy from main (not from manual dispatch on other refs).
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Forge deploy (git pull on the droplet — no build)
+        env:
+          FORGE_DEPLOY_WEBHOOK_URL: ${{ secrets.FORGE_DEPLOY_WEBHOOK_URL }}
+        run: |
+          if [ -z "$FORGE_DEPLOY_WEBHOOK_URL" ]; then
+            echo "::error::FORGE_DEPLOY_WEBHOOK_URL secret is not set."
+            exit 1
+          fi
+          # -f: fail on HTTP >= 400, -sS: quiet but show errors.
+          curl -fsS -X POST "$FORGE_DEPLOY_WEBHOOK_URL"
+          echo "Forge deploy triggered."
+
+      - name: Post-deploy health check (200 + known string)
+        run: |
+          ok=0
+          for i in $(seq 1 10); do
+            # Give the droplet's git pull time to land before each attempt.
+            code=$(curl -fsS -o /tmp/body -w "%{http_code}" --max-time 10 \
+                     https://rackoon.cloud/game/game.html || true)
+            if [ "$code" = "200" ] && grep -q "Rackoon Tycoon" /tmp/body; then
+              ok=1; echo "Live site healthy (attempt $i)."; break
+            fi
+            echo "Not ready yet (attempt $i, code=$code); retrying..."
+            sleep 6
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::Health check failed — site did not return 200 with the expected content."
+            exit 1
+          fi

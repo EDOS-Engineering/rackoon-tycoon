@@ -1,0 +1,109 @@
+# Rackoon Tycoon — ALTERNATIVE deploy via SSH/rsync (NOT the recommended path).
+#
+# Use only if you want GitHub Actions to drive the droplet directly instead of
+# going through the Forge deploy webhook (see deploy.yml, the recommended path).
+#
+# DISABLED BY DEFAULT: this workflow only runs on manual dispatch, so it won't
+# fire on push. To make it the real deploy path, change the `on:` trigger to
+# `push: { branches: [main] }` and disable deploy.yml's deploy job.
+#
+# Required GitHub repository secrets:
+#   SSH_HOST          — droplet static IP (164.90.247.182) or rackoon.cloud
+#   SSH_USER          — deploy user, normally `forge`
+#   SSH_KEY           — DEDICATED ed25519 deploy PRIVATE key (not a personal key)
+#   DEPLOY_PATH       — e.g. /home/forge/rackoon.cloud
+#   SSH_KNOWN_HOSTS   — output of `ssh-keyscan 164.90.247.182` (host-key pin)
+#
+# Never hardcode any of these. Static site: no build step here either.
+
+name: deploy-ssh
+
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Headless simulation harness
+        run: node tooling/headless.mjs
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH (private key + pinned host key)
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          for v in SSH_KEY SSH_KNOWN_HOSTS; do
+            if [ -z "${!v}" ]; then echo "::error::$v secret is not set."; exit 1; fi
+          done
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      # Primary SSH flavour: git pull on the droplet (mirrors the Forge script).
+      - name: Deploy via git pull over SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          for v in SSH_HOST SSH_USER DEPLOY_PATH; do
+            if [ -z "${!v}" ]; then echo "::error::$v secret is not set."; exit 1; fi
+          done
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" \
+            "cd '$DEPLOY_PATH' && git fetch origin main && git reset --hard origin/main && git rev-parse --short HEAD"
+
+      # ALTERNATIVE rsync flavour (push files instead of pulling git). Excludes
+      # the dev-only tooling/ dir and .git. Uncomment to use instead of the step
+      # above (and comment that one out).
+      # - name: Deploy via rsync
+      #   env:
+      #     SSH_HOST: ${{ secrets.SSH_HOST }}
+      #     SSH_USER: ${{ secrets.SSH_USER }}
+      #     DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      #   run: |
+      #     rsync -az --delete \
+      #       --exclude '.git' --exclude 'tooling' --exclude '.github' \
+      #       -e "ssh -i ~/.ssh/deploy_key" \
+      #       ./ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+      - name: Post-deploy health check (200 + known string)
+        run: |
+          ok=0
+          for i in $(seq 1 10); do
+            code=$(curl -fsS -o /tmp/body -w "%{http_code}" --max-time 10 \
+                     https://rackoon.cloud/game/game.html || true)
+            if [ "$code" = "200" ] && grep -q "Rackoon Tycoon" /tmp/body; then
+              ok=1; echo "Live site healthy (attempt $i)."; break
+            fi
+            echo "Not ready yet (attempt $i, code=$code); retrying..."
+            sleep 6
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::Health check failed."; exit 1
+          fi
