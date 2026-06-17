@@ -172,6 +172,52 @@ const levels3c = await page.evaluate(async () => {
   };
 });
 
+// --- Pre-Phase 5 fixes ---
+// AZ randomization: EventDirector must not hardcode zone 1 for every run.
+const azFix = await page.evaluate(async () => {
+  const m = await import("./src/waves/events.js");
+  // Run the constructor 20 times with no explicit zone; collect assigned zones.
+  const zones = new Set();
+  for (let i = 0; i < 20; i++) {
+    const ed = new m.EventDirector(
+      [{ at: 10, kind: "az_failure", duration: 5, warn: 3 }],
+      18
+    );
+    zones.add(ed.events[0].zone);
+  }
+  // After 20 trials we should see at least 2 distinct zones (probability 1 - (1/3)^19 ≈ 1)
+  return { distinctZones: zones.size, zones: [...zones].sort() };
+});
+
+// Win requirement checking: leaky_pipe must block a non-VPCE route.
+const winReq = await page.evaluate(async () => {
+  const m = await import("./src/levels/levels.js");
+  const leaky = m.LEVELS.leaky_pipe;
+  const raccoons = m.LEVELS.raccoons_gate;
+  const replay = m.LEVELS.replay_or_gone;
+  const writer = m.LEVELS.single_writer;
+  return {
+    leakyHasReq: !!leaky?.winRequires,
+    leakySinkIs:  leaky?.winRequires?.sinkIs?.includes("s3") ?? false,
+    leakyPathAll: leaky?.winRequires?.pathContainsAll?.includes("vpc_endpoint") ?? false,
+    raccoonsHasReq: !!raccoons?.winRequires,
+    raccoonsAny: raccoons?.winRequires?.pathContainsAny?.some(id => ["waf","shield"].includes(id)) ?? false,
+    replayHasReq: !!replay?.winRequires,
+    replayStreams: replay?.winRequires?.pathContainsAll?.includes("kinesis_streams") ?? false,
+    writerHasReq: !!writer?.winRequires,
+    writerSinkIs: writer?.winRequires?.sinkIs?.some(id => ["aurora_sv2","aurora_limitless"].includes(id)) ?? false,
+  };
+});
+
+// Sandbox reinvestment: goalRequests=0 level exists; _reinvestRate property present on scene.
+const sandboxFix = await page.evaluate(() => {
+  const s = window.__rackoon.scenes.current;
+  return {
+    hasSandboxLevel: !!window.__rackoon,
+    hasReinvestRate: "_reinvestRate" in s,
+  };
+});
+
 // --- Phase 4: audio engine + exam tips + sandbox ---
 const phase4 = await page.evaluate(async () => {
   // Audio engine exports singleton.
@@ -213,6 +259,9 @@ console.log("difficulty:", JSON.stringify(diff));
 console.log("catalog3b:", JSON.stringify(catalog3b));
 console.log("levels3c:", JSON.stringify(levels3c));
 console.log("r53 global:", JSON.stringify(r53));
+console.log("azFix:", JSON.stringify(azFix));
+console.log("winReq:", JSON.stringify(winReq));
+console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
 // Behaviour assertions.
@@ -251,6 +300,19 @@ if (levels3c.levelCount !== 7)      problems.push("LEVEL_ORDER should have 7 lev
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
 if (!levels3c.singleWriterIsLast)   problems.push("single_writer should be last level");
+// Pre-Phase-5 fix assertions.
+if (azFix.distinctZones < 2)        problems.push("AZ failure zone not randomized — all " + azFix.distinctZones + " trials hit same zone");
+if (!winReq.leakyHasReq)            problems.push("leaky_pipe missing winRequires");
+if (!winReq.leakySinkIs)            problems.push("leaky_pipe winRequires.sinkIs should include 's3'");
+if (!winReq.leakyPathAll)           problems.push("leaky_pipe winRequires.pathContainsAll should include 'vpc_endpoint'");
+if (!winReq.raccoonsHasReq)         problems.push("raccoons_gate missing winRequires");
+if (!winReq.raccoonsAny)            problems.push("raccoons_gate winRequires.pathContainsAny should include 'waf' or 'shield'");
+if (!winReq.replayHasReq)           problems.push("replay_or_gone missing winRequires");
+if (!winReq.replayStreams)          problems.push("replay_or_gone winRequires.pathContainsAll should include 'kinesis_streams'");
+if (!winReq.writerHasReq)           problems.push("single_writer missing winRequires");
+if (!winReq.writerSinkIs)           problems.push("single_writer winRequires.sinkIs should include aurora_sv2 or aurora_limitless");
+if (!sandboxFix.hasReinvestRate)    problems.push("LevelScene missing _reinvestRate for sandbox slider");
+
 console.log("phase4:", JSON.stringify(phase4));
 
 // Phase 4 assertions.

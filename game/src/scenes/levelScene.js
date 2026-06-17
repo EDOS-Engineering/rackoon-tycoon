@@ -100,6 +100,17 @@ export class LevelScene extends Scene {
     // Particle effects (T4.1): burst on building placement.
     this._particles = [];
 
+    // Win requirement state: tracks whether the current route satisfies the
+    // level's winRequires constraints. Updated in _checkOutcome.
+    this._reqHint = null; // string shown to player when goal is met but reqs aren't
+
+    // Sandbox revenue reinvestment slider (T4 fix): controls what fraction of
+    // each completed request's revenue flows back into the AWS budget.
+    // Only active when level.goalRequests === 0 (sandbox mode).
+    this._reinvestRate = 0.5; // default 50%
+    this._sliderDragging = false;
+    this._sliderRect = null; // set during render
+
     // Center + frame the camera on the grid.
     const cam = this.game.camera;
     cam.centerOn(this.grid.worldWidth() / 2, this.grid.worldHeight() / 2);
@@ -204,6 +215,20 @@ export class LevelScene extends Scene {
     // pressing Begin never accidentally places a building on the board behind it.
     const overBriefing =
       !this.started && this._hitRect(this._briefingRect, input.x, input.y);
+    // Sandbox slider tracks independently of the palette.
+    const isSandbox = !this.level.goalRequests;
+    if (isSandbox && this._sliderRect) {
+      const sr = this._sliderRect;
+      if (input.leftDown && input.x >= sr.x && input.x <= sr.x + sr.w &&
+          input.y >= sr.y - 10 && input.y <= sr.y + sr.h + 10) {
+        this._sliderDragging = true;
+      }
+      if (!input.left) this._sliderDragging = false;
+      if (this._sliderDragging && input.left) {
+        const frac = clamp((input.x - sr.x) / sr.w, 0, 1);
+        this._reinvestRate = Math.round(frac * 10) / 10; // snap to 10%
+      }
+    }
     const overUI = this.palette.isOver(input.x, input.y) || overBriefing;
     this.palette.updateHover(input.x, input.y, dt);
 
@@ -384,12 +409,77 @@ export class LevelScene extends Scene {
       wavesFinished: this.waves.finished,
       minRequestsForWin: 1,
     });
+    if (res.outcome === OUTCOME.WIN) {
+      // Check level-specific service requirements before accepting the win.
+      const reqCheck = this._checkWinRequires();
+      if (!reqCheck.ok) {
+        // Goal met but build doesn't satisfy the lesson — show a hint, don't win.
+        this._reqHint = reqCheck.hint;
+        return;
+      }
+      this._reqHint = null;
+    } else {
+      // Clear hint whenever not in a "goal met but reqs fail" state.
+      if (res.outcome === OUTCOME.PLAYING) this._reqHint = null;
+    }
     if (res.outcome !== OUTCOME.PLAYING) {
       this.outcome = res.outcome;
       this.outcomeReason = res.reason;
       this._endTimer = 1.6;
-      // resultsScene plays the win/lose sound when it enters; no need to play here.
     }
+  }
+
+  // Check whether the current routing path satisfies this level's winRequires.
+  // Returns { ok: true } or { ok: false, hint: string }.
+  _checkWinRequires() {
+    const req = this.level.winRequires;
+    if (!req) return { ok: true };
+
+    // Find the current best route from the gate.
+    const blocked = (key) => this._isKeyDisabled(key);
+    let activePath = null;
+    let activeSinkKey = null;
+    for (const gk of this.gateKeys) {
+      const trip = findRoundTrip(this.grid, gk, blocked);
+      if (trip) { activePath = trip.path; activeSinkKey = trip.sinkKey; break; }
+    }
+    if (!activePath) return { ok: false, hint: req.requirementHint || "No valid route" };
+
+    // Collect service ids along the path.
+    const pathIds = new Set();
+    for (const key of activePath) {
+      const [c, r] = Grid.parseKey(key);
+      const b = this.grid.getBuilding(c, r);
+      if (b) pathIds.add(b.service.id);
+    }
+
+    // sinkIs: the sink the path terminates at must be one of the listed ids.
+    if (req.sinkIs) {
+      const [sc, sr] = Grid.parseKey(activeSinkKey);
+      const sink = this.grid.getBuilding(sc, sr);
+      if (!sink || !req.sinkIs.includes(sink.service.id)) {
+        return { ok: false, hint: req.requirementHint || "Wrong sink service for this challenge" };
+      }
+    }
+
+    // pathContainsAll: every listed service id must appear in the path.
+    if (req.pathContainsAll) {
+      for (const id of req.pathContainsAll) {
+        if (!pathIds.has(id)) {
+          return { ok: false, hint: req.requirementHint || "Required service missing from route" };
+        }
+      }
+    }
+
+    // pathContainsAny: at least one listed service id must appear in the path.
+    if (req.pathContainsAny) {
+      const has = req.pathContainsAny.some((id) => pathIds.has(id));
+      if (!has) {
+        return { ok: false, hint: req.requirementHint || "Required service missing from route" };
+      }
+    }
+
+    return { ok: true };
   }
 
   // Build the results payload (score + stars + bill breakdown) and transition.
@@ -603,6 +693,11 @@ export class LevelScene extends Scene {
         const reward = this._rewardFor(p);
         this.revenue += reward;
         this.success++;
+        // Sandbox: reinvest a configurable fraction of revenue back into budget.
+        if (!this.level.goalRequests && this._reinvestRate > 0) {
+          const reinvested = Math.round(reward * this._reinvestRate);
+          if (reinvested > 0) this.budget += reinvested;
+        }
         this._spawnFloat(p.x, p.y, "+$" + reward, PALETTE.good);
       } else if (p.status === "dropped") {
         // ---- HOOK: on-drop → lost (an SLA miss costs goodwill/credits). ----
@@ -851,6 +946,13 @@ export class LevelScene extends Scene {
     // Persistent one-line objective (always visible, top-center) — keeps the
     // core goal + flow on screen after the briefing closes.
     this._renderObjective(ctx, W);
+
+    // Win requirement hint: shown when goal count is met but build doesn't satisfy
+    // the level's service constraints.
+    if (this._reqHint) this._renderReqHint(ctx, W);
+
+    // Sandbox reinvestment slider (only in sandbox mode, once shift started).
+    if (!this.level.goalRequests && this.started) this._renderSandboxSlider(ctx, W);
 
     // Briefing overlay — stays up (sim paused) until the shift begins.
     if (!this.started) this._renderBriefing(ctx, W, H);
@@ -1194,6 +1296,97 @@ export class LevelScene extends Scene {
       this.outcomeReason = "cashout";
       this._goToResults();
     }
+  }
+
+  // Requirement-not-met warning: amber chip below the objective, explaining
+  // what the player's route is still missing to qualify for a win.
+  _renderReqHint(ctx, W) {
+    const lines = wrapText(this._reqHint, 70);
+    ctx.save();
+    ctx.font = FONT.uiSmall;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+
+    const lineH = 14;
+    const w = Math.min(W - 40, 520);
+    const h = 18 + lines.length * lineH;
+    const x = W / 2 - w / 2;
+    const y = 44; // just below the objective chip
+
+    ctx.fillStyle = "rgba(255,179,71,0.12)";
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.fill();
+    ctx.strokeStyle = PALETTE.warn;
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.stroke();
+
+    ctx.fillStyle = PALETTE.warn;
+    ctx.font = "700 11px system-ui, sans-serif";
+    ctx.fillText("⚠ GOAL MET — BUT WIN BLOCKED:", W / 2, y + 5);
+    ctx.font = FONT.uiSmall;
+    ctx.fillStyle = PALETTE.text;
+    let ty = y + 17;
+    for (const ln of lines) {
+      ctx.fillText(ln, W / 2, ty);
+      ty += lineH;
+    }
+    ctx.restore();
+  }
+
+  // Sandbox revenue-reinvestment slider. Horizontal track in the top-right area.
+  _renderSandboxSlider(ctx, W) {
+    const slW = 200;
+    const slH = 8;
+    const slX = W - slW - 14;
+    const slY = 130; // below Cash Out button
+    this._sliderRect = { x: slX, y: slY, w: slW, h: slH };
+
+    ctx.save();
+
+    // Label.
+    ctx.font = FONT.uiSmall;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.fillText(
+      "💰 Revenue → Budget: " + Math.round(this._reinvestRate * 100) + "%",
+      slX + slW,
+      slY - 5
+    );
+
+    // Track background.
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    roundRect(ctx, slX, slY, slW, slH, 4);
+    ctx.fill();
+
+    // Filled portion.
+    const fillW = Math.max(0, slW * this._reinvestRate);
+    if (fillW > 1) {
+      ctx.fillStyle = PALETTE.good;
+      roundRect(ctx, slX, slY, fillW, slH, 4);
+      ctx.fill();
+    }
+
+    // Thumb.
+    const thumbX = slX + fillW;
+    ctx.fillStyle = PALETTE.text;
+    ctx.beginPath();
+    ctx.arc(thumbX, slY + slH / 2, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = PALETTE.bgDeep;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // 0% / 100% end labels.
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.fillText("0%", slX, slY + slH + 12);
+    ctx.textAlign = "right";
+    ctx.fillText("100%", slX + slW, slY + slH + 12);
+
+    ctx.restore();
   }
 }
 

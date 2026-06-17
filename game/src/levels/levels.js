@@ -90,7 +90,7 @@ export const LEVELS = {
     ],
     events: [
       { at: 34, kind: "traffic_spike", duration:  8, warn: 6, magnitude: 1.6 },
-      { at: 58, kind: "az_failure",    duration: 14, warn: 8, zone: 1 },
+      { at: 58, kind: "az_failure",    duration: 14, warn: 8 }, // zone randomized each run
       { at: 86, kind: "cost_audit",    duration: 14, warn: 6, magnitude: 1.5 },
     ],
     slaMaxDropRate: 0.32,
@@ -132,8 +132,15 @@ export const LEVELS = {
       { at: 58, kind: "traffic_spike", duration: 10, warn: 6, magnitude: 1.8 },
     ],
     slaMaxDropRate: 0.35,
+    // Win requires the route to go through VPC Endpoint and reach S3 as the sink.
+    // A plain ALB→EC2→RDS path does not fulfill the lesson.
+    winRequires: {
+      sinkIs: ["s3", "kinesis_firehose"],
+      pathContainsAll: ["vpc_endpoint"],
+      requirementHint: "Route must reach S3 via VPC Endpoint — bypass the NAT Gateway",
+    },
     intro:
-      "A NAT Gateway and an S3 bucket are already on the board. You need to route guests from the gate through compute to S3 — but watch your bill.\n\nNAT Gateway has ×8 data-transfer cost per hop. Every packet crossing it is 8× more expensive than a plain wire. VPC Endpoint (Gateway type) routes the same traffic inside AWS with near-zero cost.\n\nThe auditor arrives early (⚠ cost audit inbound). If you're running NAT, you'll feel it. Replace or bypass the NAT Gateway with a VPC Endpoint and wire it into the path instead.\n\nCheck the 'Net' tab in the palette. Route 55 to win.",
+      "A NAT Gateway and an S3 bucket are already on the board. You need to route guests from the gate through compute to S3 — but watch your bill.\n\nNAT Gateway has ×8 data-transfer cost per hop. Every packet crossing it is 8× more expensive than a plain wire. VPC Endpoint (Gateway type) routes the same traffic inside AWS with near-zero cost.\n\nThe auditor arrives early (⚠ cost audit inbound). If you're running NAT, you'll feel it. Replace or bypass the NAT Gateway with a VPC Endpoint and wire it into the path instead.\n\n⚠ WIN CONDITION: route must reach S3 via VPC Endpoint.\n\nCheck the 'Net' tab in the palette. Route 55 to win.",
     examTip:
       "Gateway VPC Endpoints (S3, DynamoDB) have zero data-transfer cost — no per-GB charge. NAT Gateway charges $0.045/GB processed. On SAA-C03, when a private subnet needs S3/DynamoDB access, Gateway Endpoint is always the cost-optimal answer.",
   },
@@ -165,8 +172,13 @@ export const LEVELS = {
       { at: 82, kind: "cost_audit",    duration: 10, warn: 5, magnitude: 1.4 },
     ],
     slaMaxDropRate: 0.35,
+    // Win requires at least WAF or Shield in the active route.
+    winRequires: {
+      pathContainsAny: ["waf", "shield"],
+      requirementHint: "Deploy WAF or Shield in your route to win — unprotected builds can't win here",
+    },
     intro:
-      "Threat intel: a DDoS wave is headed your way — two large traffic spikes will hit the park.\n\nWithout protection, the multiplier floods your compute and databases; queues fill and guests drop. AWS WAF (Security tab) absorbs 50% of any spike multiplier excess. Shield Advanced absorbs 75%. Place them before the first wave hits.\n\nTip: Wire CloudFront in front of your ALB — it also has lower data-transfer cost and very high throughput, so it absorbs volume before it reaches your origin.\n\nRoute 80 to win.",
+      "Threat intel: a DDoS wave is headed your way — two large traffic spikes will hit the park.\n\nWithout protection, the multiplier floods your compute and databases; queues fill and guests drop. AWS WAF (Security tab) absorbs 50% of any spike multiplier excess. Shield Advanced absorbs 75%. Place them before the first wave hits.\n\nTip: Wire CloudFront in front of your ALB — it also has lower data-transfer cost and very high throughput, so it absorbs volume before it reaches your origin.\n\n⚠ WIN CONDITION: route must include WAF or Shield.\n\nRoute 80 to win.",
     examTip:
       "DDoS defense in depth: Shield Advanced at the account level, WAF rules on CloudFront/ALB, CloudFront to absorb volumetric traffic at the edge. Shield Advanced includes AWS DRT (DDoS Response Team) support.",
   },
@@ -192,12 +204,17 @@ export const LEVELS = {
     ],
     events: [
       { at: 32, kind: "traffic_spike", duration: 12, warn: 7, magnitude: 2.0 },
-      { at: 60, kind: "az_failure",    duration: 12, warn: 8, zone: 2 },
+      { at: 60, kind: "az_failure",    duration: 12, warn: 8 }, // zone randomized each run
       { at: 78, kind: "cost_audit",    duration: 10, warn: 5, magnitude: 1.3 },
     ],
     slaMaxDropRate: 0.35,
+    // Win requires Kinesis Streams in the path — a plain EC2→RDS setup won't do.
+    winRequires: {
+      pathContainsAll: ["kinesis_streams"],
+      requirementHint: "Route must include Kinesis Data Streams — this is a streaming pipeline, not a request/response app",
+    },
     intro:
-      "You're processing a high-volume IoT telemetry stream. Two very different services handle it — choose wisely.\n\nKinesis Data Streams (Compute tab): replayable event stream. 24-hour default retention, up to 365 days. Downstream consumers can re-read data if processing fails. Use this for real-time analytics where replay matters.\n\nKinesis Firehose (Data tab): reliable, high-throughput delivery to S3. No replay — once the data is delivered, the stream is gone. Use this as the final sink into your data lake.\n\nAn AZ failure hits late in the shift. Design your pipeline to survive it: Streams in compute, Firehose as the final sink to S3. Route 70 to win.",
+      "You're processing a high-volume IoT telemetry stream. Two very different services handle it — choose wisely.\n\nKinesis Data Streams (Compute tab): replayable event stream. 24-hour default retention, up to 365 days. Downstream consumers can re-read data if processing fails. Use this for real-time analytics where replay matters.\n\nKinesis Firehose (Data tab): reliable, high-throughput delivery to S3. No replay — once the data is delivered, the stream is gone. Use this as the final sink into your data lake.\n\nAn AZ failure hits late in the shift. Design your pipeline to survive it: Streams in compute, Firehose as the final sink to S3.\n\n⚠ WIN CONDITION: route must include Kinesis Data Streams.\n\nRoute 70 to win.",
     examTip:
       "Kinesis Streams: replayable, multiple consumers, shard-based scaling. Firehose: delivery pipeline only, no replay, managed scaling, near-real-time (60s buffer). When the question mentions replay or re-processing: Streams. When it mentions delivery to S3/Redshift: Firehose.",
   },
@@ -228,8 +245,14 @@ export const LEVELS = {
       { at: 90, kind: "cost_audit",    duration: 12, warn: 5, magnitude: 1.4 },
     ],
     slaMaxDropRate: 0.30,
+    // Win requires Aurora SV2 or Aurora Limitless as the sink — plain RDS won't handle
+    // the peak write load and doesn't teach the SV2 vs Limitless decision.
+    winRequires: {
+      sinkIs: ["aurora_sv2", "aurora_limitless"],
+      requirementHint: "Sink must be Aurora Serverless v2 or Aurora Limitless — RDS cannot handle these write volumes",
+    },
     intro:
-      "Write traffic is about to overwhelm a single database. You need to choose the right scaling strategy before the ceiling hits.\n\nAurora Serverless v2 (DB tab): vertical auto-scaling. Handles traffic spikes by scaling ACUs up automatically — up to 2× base throughput. One writer. Best for unpredictable workloads with moderate peaks.\n\nAurora Limitless (DB tab): horizontal sharding — breaks the single-writer ceiling by distributing writes across shard nodes. Handles extreme throughput. Very expensive; only reach for it when v2's ceiling is genuinely insufficient.\n\nThe wave peaks at 3× rate. Plan your database strategy early — once queues overflow, it's hard to recover. Route 100 to win.",
+      "Write traffic is about to overwhelm a single database. You need to choose the right scaling strategy before the ceiling hits.\n\nAurora Serverless v2 (DB tab): vertical auto-scaling. Handles traffic spikes by scaling ACUs up automatically — up to 2× base throughput. One writer. Best for unpredictable workloads with moderate peaks.\n\nAurora Limitless (DB tab): horizontal sharding — breaks the single-writer ceiling by distributing writes across shard nodes. Handles extreme throughput. Very expensive; only reach for it when v2's ceiling is genuinely insufficient.\n\nThe wave peaks at 3× rate. Plan your database strategy early — once queues overflow, it's hard to recover.\n\n⚠ WIN CONDITION: database must be Aurora Serverless v2 or Aurora Limitless.\n\nRoute 100 to win.",
     examTip:
       "Aurora SV2 = vertical scaling (more ACUs, same single writer). Aurora Limitless = horizontal sharding (distributed writes). On SAA-C03: if the bottleneck is a single writer's I/O ceiling, Limitless. If it's unpredictable load on a single instance, SV2.",
   },

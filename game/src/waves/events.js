@@ -47,17 +47,31 @@ export const AZ_LABELS = ["us-rk-1a", "us-rk-1b", "us-rk-1c"];
 // omits `events`). Each entry: { at, kind, duration, warn, zone?, magnitude? }.
 const DEFAULT_EVENTS = [
   { at: 30, kind: EVENT_KIND.TRAFFIC_SPIKE, duration: 8, warn: 5, magnitude: 1.8 },
-  { at: 52, kind: EVENT_KIND.AZ_FAILURE, duration: 12, warn: 6, zone: 1 },
+  { at: 52, kind: EVENT_KIND.AZ_FAILURE, duration: 12, warn: 6 }, // zone randomized at runtime
   { at: 78, kind: EVENT_KIND.COST_AUDIT, duration: 14, warn: 5, magnitude: 1.6 },
 ];
 
 export class EventDirector {
   constructor(events, cols) {
     this.cols = cols;
-    this.events = (events && events.length ? events : DEFAULT_EVENTS).map((e) => ({
-      ...e,
-      state: "pending",
-    }));
+    // Clone events and assign random zones for AZ failures whose zone was not
+    // explicitly pinned. Multiple AZ failures in the same level get distinct
+    // zones so the player always faces real multi-AZ pressure.
+    const usedZones = new Set();
+    this.events = (events && events.length ? events : DEFAULT_EVENTS).map((e) => {
+      const ev = { ...e, state: "pending" };
+      if (ev.kind === EVENT_KIND.AZ_FAILURE && ev.zone == null) {
+        const avail = [];
+        for (let z = 0; z < AZ_COUNT; z++) {
+          if (!usedZones.has(z)) avail.push(z);
+        }
+        ev.zone = avail.length > 0
+          ? avail[Math.floor(Math.random() * avail.length)]
+          : Math.floor(Math.random() * AZ_COUNT);
+      }
+      if (ev.kind === EVENT_KIND.AZ_FAILURE) usedZones.add(ev.zone);
+      return ev;
+    });
     this.t = 0;
   }
 
