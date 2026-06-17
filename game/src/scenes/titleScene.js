@@ -175,6 +175,24 @@ export class TitleScene extends Scene {
       return;
     }
 
+    // While the campaign dropdown is open it owns ALL input — a click launches a
+    // row, and a click anywhere else (incl. the buttons beneath) just closes it.
+    // This guard runs before the sandbox/difficulty hit-tests so a mission row
+    // can never click through to a control behind the panel.
+    if (this.missionsOpen) {
+      if (input.pressed("Escape")) { this.missionsOpen = false; return; }
+      if (input.leftDown) {
+        for (const lb of this._levelBtns) {
+          if (lb.unlocked && this._in(lb)) {
+            this.game.scenes.go("level", { levelId: lb.id });
+            return;
+          }
+        }
+        if (!this._in(this._missionsPanel)) this.missionsOpen = false;
+      }
+      return; // modal while open
+    }
+
     // Hit-test the New Game button → open the confirmation modal.
     if (input.leftDown && this._in(this._newGameBtn)) {
       this.confirmReset = true;
@@ -206,24 +224,11 @@ export class TitleScene extends Scene {
       }
     }
 
-    // Campaign missions dropdown. The trigger button toggles it; while open it
-    // owns input (row launches a level, outside-click / Esc closes it).
+    // Open the campaign missions dropdown (closing is handled by the open-guard
+    // above, so a click on the trigger while open falls through to close it).
     if (input.leftDown && this._in(this._missionsBtn)) {
-      this.missionsOpen = !this.missionsOpen;
+      this.missionsOpen = true;
       return;
-    }
-    if (this.missionsOpen) {
-      if (input.pressed("Escape")) { this.missionsOpen = false; return; }
-      if (input.leftDown) {
-        for (const lb of this._levelBtns) {
-          if (lb.unlocked && this._in(lb)) {
-            this.game.scenes.go("level", { levelId: lb.id });
-            return;
-          }
-        }
-        if (!this._in(this._missionsPanel)) this.missionsOpen = false;
-      }
-      return; // modal while open
     }
 
     // Hit-test Play / Continue button.
@@ -323,12 +328,15 @@ export class TitleScene extends Scene {
     ctx.fillText(playLabel, cx, by + bh / 2 + 1);
     ctx.textBaseline = "alphabetic";
 
-    // Difficulty selector, then a single "Campaign" dropdown trigger (keeps the
-    // title uncluttered; the mission list expands to a readable width on click).
+    // Difficulty selector, then Sandbox, then the "Campaign" dropdown trigger
+    // LAST so the mission list expands into empty space below it — nothing sits
+    // beneath the dropdown to be clicked through (the Fan Out row used to overlap
+    // the Sandbox button).
     this._renderDifficulty(ctx, cx, by + bh + 16, W);
-    const mby = by + bh + 84;
+    const sby = by + bh + 84;
+    this._renderSandboxBtn(ctx, cx, sby, W);
+    const mby = sby + 46;
     this._renderMissionsButton(ctx, cx, mby, W);
-    this._renderSandboxBtn(ctx, cx, mby + 46, W);
 
     // New Game button (top-right). The missions dropdown + confirm modal draw on
     // top of everything else.
