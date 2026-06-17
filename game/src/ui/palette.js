@@ -279,7 +279,8 @@ export class BuildPalette {
 
     const lines = wrap(svc.blurb, 44);
     const statLine = `Cost $${svc.cost}  •  Throughput ${svc.throughput}  •  Latency ${svc.latency}ms`;
-    this._panel(ctx, bar, svc.label, [statLine, ...(extras.length ? ["", ...extras, ""] : [""]), ...lines], svc.color);
+    const tipLines = svc.examTip ? ["", "📚 Exam:", ...wrap(svc.examTip, 44)] : [];
+    this._panel(ctx, bar, svc.label, [statLine, ...(extras.length ? ["", ...extras, ""] : [""]), ...lines, ...tipLines], svc.color);
   }
 
   _toolTip(ctx, bar, title, body) {
@@ -311,8 +312,12 @@ export class BuildPalette {
     ctx.font = FONT.uiSmall;
     let ty = y + 34;
     for (const ln of bodyLines) {
-      if (ln.startsWith("⚠") || ln.startsWith("✓") || ln.startsWith("🛡")) {
-        ctx.fillStyle = ln.startsWith("⚠") ? PALETTE.warn : PALETTE.good;
+      if (ln.startsWith("⚠")) {
+        ctx.fillStyle = PALETTE.warn;
+      } else if (ln.startsWith("✓") || ln.startsWith("🛡")) {
+        ctx.fillStyle = PALETTE.good;
+      } else if (ln.startsWith("📚")) {
+        ctx.fillStyle = PALETTE.accent;
       } else {
         ctx.fillStyle = PALETTE.textDim;
       }

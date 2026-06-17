@@ -10,6 +10,7 @@ import { load, save } from "../save/storage.js";
 import { recordResult, bestFor } from "../save/progress.js";
 import { OUTCOME } from "../economy/scoring.js";
 import { getLevel } from "../levels/levels.js";
+import { audio } from "../engine/audio.js";
 
 export class ResultsScene extends Scene {
   enter(payload) {
@@ -45,6 +46,13 @@ export class ResultsScene extends Scene {
     this._starAt = [0.35, 0.6, 0.85];
 
     this._btns = {};
+
+    // Exam tip for this level (T4.3).
+    const lvl = getLevel(this.r.levelId || "first_light");
+    this.examTip = lvl.examTip || null;
+
+    // Play win/lose sound (T4.2).
+    audio.play(this.won ? "win" : "lose");
   }
 
   update(dt) {
@@ -85,7 +93,9 @@ export class ResultsScene extends Scene {
 
     const cx = W / 2;
     const panW = 480;
-    const panH = 520;
+    const examLines = this.examTip ? wrapTip(this.examTip, 54) : [];
+    const examH = examLines.length > 0 ? 26 + examLines.length * 15 : 0;
+    const panH = 520 + examH;
     const px = cx - panW / 2;
     const py = Math.max(10, H / 2 - panH / 2);
 
@@ -162,6 +172,32 @@ export class ResultsScene extends Scene {
       ry + 10
     );
     ry += 22;
+
+    // SAA-C03 exam tip (T4.3) — shown for every completed level.
+    if (examLines.length > 0) {
+      const tipX = px + 18;
+      const tipW = panW - 36;
+      const tipY = ry + 8;
+      ctx.fillStyle = "rgba(255,179,71,0.08)";
+      roundRect(ctx, tipX, tipY, tipW, examH - 2, 8);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,179,71,0.25)";
+      ctx.lineWidth = 1;
+      roundRect(ctx, tipX, tipY, tipW, examH - 2, 8);
+      ctx.stroke();
+      ctx.textAlign = "left";
+      ctx.font = "700 11px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.accent;
+      ctx.fillText("📚  SAA-C03 EXAM TIP", tipX + 10, tipY + 11);
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.textDim;
+      let ety = tipY + 24;
+      for (const ln of examLines) {
+        ctx.fillText(ln, tipX + 10, ety);
+        ety += 15;
+      }
+      ry = ety + 4;
+    }
 
     // Unlock / best celebration.
     if (this.persist && this.persist.unlockedNext && this._nextLabel()) {
@@ -265,6 +301,18 @@ export class ResultsScene extends Scene {
     ctx.fillText(label, b.x + b.w / 2, b.y + b.h / 2 + 1);
     ctx.textBaseline = "alphabetic";
   }
+}
+
+function wrapTip(text, n) {
+  const words = text.split(/\s+/);
+  const lines = [];
+  let cur = "";
+  for (const w of words) {
+    if ((cur + " " + w).trim().length > n) { lines.push(cur.trim()); cur = w; }
+    else cur += " " + w;
+  }
+  if (cur.trim()) lines.push(cur.trim());
+  return lines;
 }
 
 function money(n) {

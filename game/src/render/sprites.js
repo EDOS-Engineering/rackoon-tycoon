@@ -135,10 +135,24 @@ export function drawService(ctx, service, cx, cy, opts = {}) {
 export function drawPacket(ctx, x, y, opts = {}) {
   const bob = opts.bob || 0;
   const status = opts.status || "travel";
+  const history = opts.history || [];
   const r = TILE * 0.13;
   const yy = y + Math.sin(bob) * 2.2;
 
   const base = status === "return" ? PALETTE.good : PALETTE.guest;
+
+  // Trail (T4.1): fading ghost circles behind the current position.
+  for (let i = 0; i < history.length; i++) {
+    const alpha = ((i + 1) / (history.length + 1)) * 0.28;
+    const hr = r * (0.45 + 0.3 * ((i + 1) / history.length));
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = base;
+    ctx.beginPath();
+    ctx.arc(history[i].x, history[i].y, hr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
 
   ctx.save();
   // Glow

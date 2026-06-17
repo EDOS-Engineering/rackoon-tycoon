@@ -48,6 +48,8 @@ export const SERVICES = {
     placeable: false,
     blurb:
       "Route 53 — global DNS front gate. Immune to AZ failures. Wire directly to endpoints in any Availability Zone — drag a wire from here to any ALB or compute tile across the grid.",
+    examTip:
+      "Route 53 + health checks = multi-region active-active or active-passive failover. Combine latency-based routing with health checks for automatic region failover.",
   },
 
   // ---- Net / Edge ----
@@ -64,6 +66,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "Application Load Balancer — distributes traffic across targets at L7. Cheap throughput multiplier; place between Route 53 and compute.",
+    examTip:
+      "ALB = L7 (HTTP/HTTPS), path/host-based routing, sticky sessions. NLB = L4, TCP/UDP, static IPs. Use NLB for non-HTTP or when you need a static IP.",
   },
 
   cloudfront: {
@@ -80,6 +84,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "CloudFront CDN — global edge cache. High throughput and 80% cheaper data-transfer than a plain wire. Place before ALB to absorb traffic and cut egress costs.",
+    examTip:
+      "CloudFront + OAC (Origin Access Control) restricts S3 to CloudFront-only. Signed URLs/cookies control access to private content. Reduces origin load and egress costs.",
   },
 
   nat_gateway: {
@@ -96,6 +102,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "NAT Gateway — routes private subnets to the internet. 8× data-transfer cost per hop. This is the 'leaky pipe' — replace with a VPC Endpoint for traffic destined for S3 or DynamoDB.",
+    examTip:
+      "NAT Gateway charges $0.045/GB processed. For S3/DynamoDB traffic from private subnets, a Gateway VPC Endpoint is free — always prefer it to avoid the NAT data-processing charge.",
   },
 
   vpc_endpoint: {
@@ -112,6 +120,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "VPC Endpoint (Gateway) — private path to S3/DynamoDB inside AWS. Near-zero data-transfer cost. Replaces NAT Gateway for AWS-internal traffic and plugs the money leak.",
+    examTip:
+      "Gateway endpoints (S3, DynamoDB) are free — no per-hour or per-GB charge. Interface endpoints (PrivateLink) cost per-hour + per-GB. On SAA-C03: Gateway endpoint always wins over NAT for those two services.",
   },
 
   cache: {
@@ -127,6 +137,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "ElastiCache — in-memory cache. Slashes latency for hot reads before they hit the DB. Pair with RDS to offload read traffic.",
+    examTip:
+      "ElastiCache Redis: persistence, pub/sub, sorted sets, multi-AZ. Memcached: simpler, multi-threaded, no persistence. Use Redis for session stores and leaderboards; Memcached for pure caching.",
   },
 
   // ---- Security ----
@@ -144,6 +156,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "AWS WAF — web application firewall. Cuts the effective spawn rate during traffic spikes and DDoS events by 50%. Wire before your ALB.",
+    examTip:
+      "WAF attaches to CloudFront, ALB, API Gateway, or AppSync. Use Managed Rule Groups (AWS or Marketplace) for OWASP Top 10 coverage without writing rules. Shield + WAF = layered DDoS defense.",
   },
 
   shield: {
@@ -160,6 +174,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "AWS Shield Advanced — premium DDoS protection. Absorbs 75% of any traffic spike excess, protecting upstream services. Expensive but essential during a DDoS wave.",
+    examTip:
+      "Shield Standard is free and always-on. Shield Advanced ($3,000/month) adds DRT access, real-time metrics, cost protection during attacks, and advanced anomaly detection.",
   },
 
   // ---- Compute ----
@@ -176,6 +192,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "EC2 + Auto Scaling Group — workhorse fleet. Steady throughput; add more EC2 tiles to scale horizontally.",
+    examTip:
+      "Auto Scaling Groups span multiple AZs automatically. Use Launch Templates (not Configurations). Target Tracking policies respond to CloudWatch metrics for scale-out/in.",
   },
 
   lambda: {
@@ -191,6 +209,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "Lambda — serverless functions. Pay-per-use; bursts well with no idle cost. Lower throughput than EC2 but cheaper for spiky workloads.",
+    examTip:
+      "Lambda cold starts: worst with Java/.NET, better with Node/Python. Provisioned Concurrency eliminates cold starts for latency-sensitive workloads. Max 15-min timeout.",
   },
 
   kinesis_streams: {
@@ -207,6 +227,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "Kinesis Data Streams — replayable event stream. 24h default retention (up to 365 days). Use when downstream consumers need to re-read data. High throughput for analytics pipelines.",
+    examTip:
+      "1 shard = 1 MB/s write, 2 MB/s read. Data persists for replay unlike SQS. Enhanced fan-out = 2 MB/s per consumer. Use Streams when multiple consumers need different processing speeds.",
   },
 
   // ---- Data / Storage ----
@@ -223,6 +245,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "Kinesis Firehose — reliable delivery to S3/Redshift. Very high throughput but NO replay: once delivered the stream is gone. Pair with Streams if you need replay upstream.",
+    examTip:
+      "Firehose buffers data (60s or 1 MB default) before delivery — it is near-real-time, not real-time. Destinations: S3, Redshift, OpenSearch, Splunk. Fully managed; no shard management.",
   },
 
   s3: {
@@ -238,6 +262,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "S3 — durable object storage. Valid request destination for static/object reads. Cheapest sink; combine with Firehose for streaming data lakes.",
+    examTip:
+      "S3 storage classes: Standard → IA → One Zone-IA → Glacier Instant → Glacier Flexible → Deep Archive (cost descending, retrieval time ascending). Use S3 Lifecycle policies to automate transitions.",
   },
 
   // ---- Database ----
@@ -254,6 +280,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "RDS — managed relational database. Standard single-AZ instance. Upgrade to Multi-AZ for automatic failover or add a Read Replica for cheap read offloading.",
+    examTip:
+      "RDS Multi-AZ = synchronous replication, automatic failover, NO read scaling. Read Replica = asynchronous, readable, manual promotion. Multi-AZ → high availability; Read Replica → read scaling.",
   },
 
   rds_multiaz: {
@@ -270,6 +298,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "RDS Multi-AZ — synchronous standby in a second AZ. Auto-promotes on AZ failure. Does NOT improve throughput (same single-writer). Worth the cost for critical OLTP workloads.",
+    examTip:
+      "RDS Multi-AZ standby is NOT readable — it only promotes during failover. Failover takes 60–120 seconds. For readable standbys use Aurora Multi-AZ, which has up to 15 readable replicas.",
   },
 
   rds_replica: {
@@ -285,6 +315,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "RDS Read Replica — asynchronous read-only copy (can be in a different AZ). Offloads reads cheaply but does NOT auto-promote on AZ failure. Same-AZ replica = free cross-AZ read traffic.",
+    examTip:
+      "Read Replicas have asynchronous lag — not for RPO=0 scenarios. Can be promoted manually (takes time). Cross-region replicas enable disaster recovery. Max 5 replicas per source RDS instance.",
   },
 
   dynamodb: {
@@ -300,6 +332,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "DynamoDB — managed NoSQL. Very high throughput with single-digit millisecond latency. Pairs well with DAX for hot-key caching.",
+    examTip:
+      "DynamoDB On-Demand vs Provisioned: On-Demand for unpredictable traffic (no capacity planning); Provisioned + Auto Scaling for predictable, cost-optimized. DDB TTL auto-expires items for free.",
   },
 
   aurora_sv2: {
@@ -316,6 +350,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "Aurora Serverless v2 — vertical auto-scaling (ACUs). Handles spikes by scaling up automatically, up to 2× base throughput. One writer; best for unpredictable workloads. Cannot scale past a ceiling.",
+    examTip:
+      "Aurora SV2 scales in-place (no failover) from minimum to maximum ACUs. Still a single writer — it scales vertically. When the single-writer ceiling is the problem, Limitless (horizontal sharding) is the answer.",
   },
 
   aurora_limitless: {
@@ -331,6 +367,8 @@ export const SERVICES = {
     placeable: true,
     blurb:
       "Aurora Limitless — horizontal sharding (distributed writer). Breaks the single-writer ceiling by sharding across nodes. Very high cost; use only when Serverless v2 auto-scaling ceiling is hit.",
+    examTip:
+      "Aurora Limitless uses distributed transactions across shard nodes. Choose it only when write throughput genuinely exceeds a single writer's maximum ACU ceiling. Cost is significantly higher than SV2.",
   },
 };
 

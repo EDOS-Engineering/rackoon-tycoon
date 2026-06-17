@@ -37,6 +37,8 @@ export const LEVELS = {
     slaMaxDropRate: 0.5,
     intro:
       "Welcome, Rocky! Get guests from the front gate to a database and back.\n\n1) Click a service in the bottom bar, then click an empty tile to place it — try an ALB, then EC2, then RDS.\n2) Drag between neighbouring tiles to wire them up: gate → ALB → EC2 → RDS.\n\nGuests then flow on their own: completed round-trips earn money, while your live AWS bill (top-left) slowly burns budget. Route 30 guests to win. Take your time — the shift starts when you click Begin. Press H any time for a help legend.",
+    examTip:
+      "The 3-tier architecture (load balancer → compute → database) is a foundational SAA-C03 pattern. Route 53 routes externally; ALB distributes internally. Always place resources in multiple AZs.",
   },
 
   // ---- Phase 2 levels ----
@@ -64,6 +66,8 @@ export const LEVELS = {
     slaMaxDropRate: 0.35,
     intro:
       "Traffic escalates in waves. A single small database will choke — its queue fills, latency climbs, requests drop. Spread load with a cache and parallel compute, or pick a higher-throughput sink. A traffic spike hits mid-shift. Route 70 to win.",
+    examTip:
+      "For peak traffic, combine horizontal EC2 Auto Scaling with ElastiCache to offload DB reads. Pre-warm Auto Scaling before the surge — reactive scaling always lags. Add headroom, not just headcount.",
   },
 
   zone_down: {
@@ -92,6 +96,8 @@ export const LEVELS = {
     slaMaxDropRate: 0.32,
     intro:
       "The park spans three Availability Zones (column bands). Mid-shift, a zone goes DARK — every building there is disabled and routes through it break.\n\nRoute 53 is a GLOBAL service: it stays online even when a zone fails, and you can wire it directly to ALBs or compute in any AZ — no need to chain through an intermediate zone.\n\nTip: RDS Multi-AZ (DB tab) has a synchronous standby and survives AZ failure automatically. RDS Read Replica is cheaper but won't auto-promote.\n\nDesign for resilience: wire Route 53 to endpoints in multiple AZs, spread compute and a Multi-AZ database across zones. Then a cost audit hits. Route 90 to win.",
+    examTip:
+      "AZ failure is a top exam scenario. Pattern: 3 AZs, Multi-AZ RDS (auto-failover, ~60–120s), Route 53 health checks to shift traffic, and ALBs in each AZ. Never single-AZ a critical workload.",
   },
 
   // ---- Sprint 3c: Gap-mapped boss levels ----
@@ -128,6 +134,8 @@ export const LEVELS = {
     slaMaxDropRate: 0.35,
     intro:
       "A NAT Gateway and an S3 bucket are already on the board. You need to route guests from the gate through compute to S3 — but watch your bill.\n\nNAT Gateway has ×8 data-transfer cost per hop. Every packet crossing it is 8× more expensive than a plain wire. VPC Endpoint (Gateway type) routes the same traffic inside AWS with near-zero cost.\n\nThe auditor arrives early (⚠ cost audit inbound). If you're running NAT, you'll feel it. Replace or bypass the NAT Gateway with a VPC Endpoint and wire it into the path instead.\n\nCheck the 'Net' tab in the palette. Route 55 to win.",
+    examTip:
+      "Gateway VPC Endpoints (S3, DynamoDB) have zero data-transfer cost — no per-GB charge. NAT Gateway charges $0.045/GB processed. On SAA-C03, when a private subnet needs S3/DynamoDB access, Gateway Endpoint is always the cost-optimal answer.",
   },
 
   // T3.5 — Priority Gap: DDoS resilience (Shield / WAF / CloudFront)
@@ -159,6 +167,8 @@ export const LEVELS = {
     slaMaxDropRate: 0.35,
     intro:
       "Threat intel: a DDoS wave is headed your way — two large traffic spikes will hit the park.\n\nWithout protection, the multiplier floods your compute and databases; queues fill and guests drop. AWS WAF (Security tab) absorbs 50% of any spike multiplier excess. Shield Advanced absorbs 75%. Place them before the first wave hits.\n\nTip: Wire CloudFront in front of your ALB — it also has lower data-transfer cost and very high throughput, so it absorbs volume before it reaches your origin.\n\nRoute 80 to win.",
+    examTip:
+      "DDoS defense in depth: Shield Advanced at the account level, WAF rules on CloudFront/ALB, CloudFront to absorb volumetric traffic at the edge. Shield Advanced includes AWS DRT (DDoS Response Team) support.",
   },
 
   // T3.3 — Priority Gap: Kinesis Streams (replayable) vs Kinesis Firehose (no replay)
@@ -188,6 +198,8 @@ export const LEVELS = {
     slaMaxDropRate: 0.35,
     intro:
       "You're processing a high-volume IoT telemetry stream. Two very different services handle it — choose wisely.\n\nKinesis Data Streams (Compute tab): replayable event stream. 24-hour default retention, up to 365 days. Downstream consumers can re-read data if processing fails. Use this for real-time analytics where replay matters.\n\nKinesis Firehose (Data tab): reliable, high-throughput delivery to S3. No replay — once the data is delivered, the stream is gone. Use this as the final sink into your data lake.\n\nAn AZ failure hits late in the shift. Design your pipeline to survive it: Streams in compute, Firehose as the final sink to S3. Route 70 to win.",
+    examTip:
+      "Kinesis Streams: replayable, multiple consumers, shard-based scaling. Firehose: delivery pipeline only, no replay, managed scaling, near-real-time (60s buffer). When the question mentions replay or re-processing: Streams. When it mentions delivery to S3/Redshift: Firehose.",
   },
 
   // T3.4 — Priority Gap: Aurora Serverless v2 (vertical) vs Aurora Limitless (horizontal)
@@ -218,6 +230,29 @@ export const LEVELS = {
     slaMaxDropRate: 0.30,
     intro:
       "Write traffic is about to overwhelm a single database. You need to choose the right scaling strategy before the ceiling hits.\n\nAurora Serverless v2 (DB tab): vertical auto-scaling. Handles traffic spikes by scaling ACUs up automatically — up to 2× base throughput. One writer. Best for unpredictable workloads with moderate peaks.\n\nAurora Limitless (DB tab): horizontal sharding — breaks the single-writer ceiling by distributing writes across shard nodes. Handles extreme throughput. Very expensive; only reach for it when v2's ceiling is genuinely insufficient.\n\nThe wave peaks at 3× rate. Plan your database strategy early — once queues overflow, it's hard to recover. Route 100 to win.",
+    examTip:
+      "Aurora SV2 = vertical scaling (more ACUs, same single writer). Aurora Limitless = horizontal sharding (distributed writes). On SAA-C03: if the bottleneck is a single writer's I/O ceiling, Limitless. If it's unpredictable load on a single instance, SV2.",
+  },
+  // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
+  sandbox: {
+    id: "sandbox",
+    name: "Sandbox",
+    subtitle: "Free build — no win condition, no time limit",
+    cols: 20,
+    rows: 12,
+    budget: 9999,
+    spawnRate: 0.55,
+    gates: [{ col: 1, row: 6 }],
+    seed: [],
+    goalRequests: 0,
+    next: null,
+    waves: [{ name: "Endless flow", duration: 99999, rate: 1.0 }],
+    events: [],
+    slaMaxDropRate: 0.55,
+    intro:
+      "Sandbox mode — no goals, no time limit, no loss conditions. Build any architecture you like and watch the traffic flow.\n\nAll 18 services are available. Experiment freely: try NAT vs VPC Endpoint cost, watch Shield absorb spikes, test Aurora SV2 auto-scaling under load.\n\nPress Cash Out (top-right) to return to the menu. The AWS bill still runs, so you'll see how different architectures affect your burn rate — experiment!",
+    examTip:
+      "Use this mode to explore service combinations without pressure. Build the same path with NAT Gateway vs VPC Endpoint and compare burn rates, or stress-test Aurora SV2's auto-scaling by wiring many packets through it.",
   },
 };
 

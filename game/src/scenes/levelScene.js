@@ -29,6 +29,7 @@ import {
   drawPendingWire,
 } from "../render/gridRenderer.js";
 import { drawPacket, roundRect, lighten } from "../render/sprites.js";
+import { audio } from "../engine/audio.js";
 // ---- Phase 2: economy, waves, events, scoring -----------------------------
 import { BillMeter, BILL } from "../economy/billing.js";
 import { WaveScheduler } from "../waves/scheduler.js";
@@ -96,6 +97,9 @@ export class LevelScene extends Scene {
     this.wireFrom = null; // {col,row} when dragging a wire
     this._panning = false;
 
+    // Particle effects (T4.1): burst on building placement.
+    this._particles = [];
+
     // Center + frame the camera on the grid.
     const cam = this.game.camera;
     cam.centerOn(this.grid.worldWidth() / 2, this.grid.worldHeight() / 2);
@@ -128,6 +132,11 @@ export class LevelScene extends Scene {
     const cam = this.game.camera;
     const W = this.game.canvas.cssW;
     const H = this.game.canvas.cssH;
+
+    // Unlock AudioContext on the first user interaction (browser autoplay policy).
+    if (input.leftDown || input.rightDown || input.pressed("Enter") || input.pressed("Space")) {
+      audio.resume();
+    }
 
     // Help legend (H) freezes the scene while it's open so it can be read safely.
     if (input.pressed("KeyH")) this.showHelp = !this.showHelp;
@@ -328,6 +337,16 @@ export class LevelScene extends Scene {
       this._dropPacketsOnBrokenPaths();
     }
 
+    // Play a sound the first time each event enters warning or active state (T4.2).
+    for (const e of this.events.events) {
+      if ((e.state === "warning" || e.state === "active") && !e._sounded) {
+        e._sounded = true;
+        if (e.kind === "az_failure") audio.play("azFail");
+        else if (e.kind === "traffic_spike") audio.play("spike");
+        else audio.play("alert");
+      }
+    }
+
     // Track events we've cleared (their window ended while we were still alive)
     // for the resilience score.
     for (const e of this.events.events) {
@@ -368,7 +387,8 @@ export class LevelScene extends Scene {
     if (res.outcome !== OUTCOME.PLAYING) {
       this.outcome = res.outcome;
       this.outcomeReason = res.reason;
-      this._endTimer = 1.6; // let the final frame land before results
+      this._endTimer = 1.6;
+      // resultsScene plays the win/lose sound when it enters; no need to play here.
     }
   }
 
@@ -444,8 +464,8 @@ export class LevelScene extends Scene {
           this.grid.place(svc, t.col, t.row);
           this.budget -= svc.cost;
           this._routeDirty = true;
-          // Stay armed (shift NOT required) so players can place several;
-          // they can right-click empty or press the tool again to disarm.
+          audio.play("place");
+          this._spawnParticles(t.col * TILE + TILE / 2, t.row * TILE + TILE / 2, svc.color);
           if (svc.cost > this.budget) this.palette.clearSelection();
         }
       }
@@ -460,6 +480,7 @@ export class LevelScene extends Scene {
           this.grid.remove(t.col, t.row);
           this.budget += b.service.cost; // refund
           this._routeDirty = true;
+          audio.play("erase");
           this._dropPacketsOnBrokenPaths();
         }
       }
@@ -510,6 +531,7 @@ export class LevelScene extends Scene {
     const bKey = Grid.key(toTile.col, toTile.row);
     if (this.grid.addEdge(aKey, bKey)) {
       this._routeDirty = true;
+      audio.play("wire");
     }
   }
 
@@ -632,6 +654,22 @@ export class LevelScene extends Scene {
     this._floats.push({ x, y, text, color, life: 1 });
   }
 
+  // Burst of small squares on building placement (T4.1).
+  _spawnParticles(x, y, color) {
+    for (let i = 0; i < 14; i++) {
+      const angle = (i / 14) * Math.PI * 2 + Math.random() * 0.4;
+      const speed = 55 + Math.random() * 90;
+      this._particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 30,
+        life: 1,
+        color,
+        size: 3.5 + Math.random() * 4,
+      });
+    }
+  }
+
   _animateBuildings(dt) {
     // Find nearest packet to each building so eyes glance at passing guests.
     for (const b of this.grid.buildings.values()) {
@@ -666,6 +704,18 @@ export class LevelScene extends Scene {
     if (this._floats) {
       for (const f of this._floats) f.life -= dt * 0.9;
       this._floats = this._floats.filter((f) => f.life > 0);
+    }
+
+    // Particles (T4.1).
+    if (this._particles.length > 0) {
+      for (const p of this._particles) {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 180 * dt; // gravity
+        p.vx *= 0.92;
+        p.life -= dt * 2.8;
+      }
+      this._particles = this._particles.filter((p) => p.life > 0);
     }
   }
 
@@ -742,7 +792,18 @@ export class LevelScene extends Scene {
       drawPacket(ctx, p.renderX(alpha), p.renderY(alpha), {
         bob: p.bob,
         status: p.status,
+        history: p._history,
       });
+    }
+
+    // Placement particles (T4.1) — above buildings, below floats.
+    for (const p of this._particles) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.life) * 0.85;
+      ctx.fillStyle = p.color;
+      const s = p.size * Math.max(0.3, p.life);
+      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+      ctx.restore();
     }
 
     // Floating feedback text (world space).
@@ -866,7 +927,8 @@ export class LevelScene extends Scene {
       }
     }
 
-    const h = (live ? 62 : 46) + lines.length * 15;
+    const tipLines = svc.examTip ? wrapText(svc.examTip, 34) : [];
+    const h = (live ? 62 : 46) + lines.length * 15 + (tipLines.length > 0 ? 6 + tipLines.length * 15 : 0);
 
     // Keep on screen.
     const W = this.game.canvas.cssW;
@@ -899,6 +961,20 @@ export class LevelScene extends Scene {
     for (const ln of lines) {
       ctx.fillText(ln, x + 12, ty);
       ty += 15;
+    }
+
+    if (tipLines.length > 0) {
+      ty += 4;
+      ctx.fillStyle = PALETTE.accent;
+      ctx.font = "700 10px system-ui, sans-serif";
+      ctx.fillText("📚 EXAM TIP", x + 12, ty);
+      ty += 14;
+      ctx.font = FONT.uiSmall;
+      ctx.fillStyle = PALETTE.textDim;
+      for (const ln of tipLines) {
+        ctx.fillText(ln, x + 12, ty);
+        ty += 15;
+      }
     }
   }
 
@@ -996,9 +1072,10 @@ export class LevelScene extends Scene {
   // Slim always-on objective reminder (top-center) so the goal + flow stay clear.
   _renderObjective(ctx, W) {
     if (!this.started && this.briefingTime < 0.3) return; // let the card own the first beat
-    const goal = this.level.goalRequests ? this.level.goalRequests : "∞";
-    const txt =
-      "🎯 Route " + this.success + " / " + goal + "   ·   gate → compute → database";
+    const isSandbox = !this.level.goalRequests;
+    const txt = isSandbox
+      ? "∞ Sandbox — " + this.success + " routed   ·   gate → compute → database"
+      : "🎯 Route " + this.success + " / " + this.level.goalRequests + "   ·   gate → compute → database";
     ctx.save();
     ctx.font = FONT.uiSmall;
     ctx.textAlign = "center";

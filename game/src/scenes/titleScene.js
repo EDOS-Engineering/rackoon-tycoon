@@ -35,6 +35,7 @@ export class TitleScene extends Scene {
     this._btn = { x: 0, y: 0, w: 0, h: 0 };
     this._levelBtns = []; // filled during render
     this._diffBtns = []; // difficulty chips, filled during render
+    this._sandboxBtn = { x: 0, y: 0, w: 0, h: 0 };
   }
 
   update(dt) {
@@ -44,6 +45,15 @@ export class TitleScene extends Scene {
     for (const s of this.sparks) {
       s.x += s.spd * dt * 0.15;
       if (s.x > 1.1) s.x -= 1.2;
+    }
+
+    // Hit-test the sandbox button.
+    if (input.leftDown) {
+      const sb = this._sandboxBtn;
+      if (input.x >= sb.x && input.x <= sb.x + sb.w && input.y >= sb.y && input.y <= sb.y + sb.h) {
+        this.game.scenes.go("level", { levelId: "sandbox" });
+        return;
+      }
     }
 
     // Hit-test difficulty chips (sets + persists the choice).
@@ -183,6 +193,7 @@ export class TitleScene extends Scene {
     // Difficulty selector (T3.8) then the level-select strip below it.
     this._renderDifficulty(ctx, cx, by + bh + 18, W);
     this._renderLevelSelect(ctx, cx, by + bh + 92, W);
+    this._renderSandboxBtn(ctx, cx, by + bh + 170, W);
 
     // Best score + role flavor.
     ctx.fillStyle = PALETTE.textFaint;
@@ -307,6 +318,34 @@ export class TitleScene extends Scene {
       x += cw + gap;
     }
     ctx.textAlign = "center";
+  }
+
+  // Sandbox button — always unlocked, separate from the campaign chain.
+  _renderSandboxBtn(ctx, cx, y, W) {
+    const bw = 170;
+    const bh = 36;
+    const bx = cx - bw / 2;
+    const over =
+      this.game.input.x >= bx &&
+      this.game.input.x <= bx + bw &&
+      this.game.input.y >= y &&
+      this.game.input.y <= y + bh;
+    this._sandboxBtn = { x: bx, y, w: bw, h: bh };
+
+    ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+    roundRect(ctx, bx, y, bw, bh, 10);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,209,102,0.3)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, bx, y, bw, bh, 10);
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "600 13px system-ui, sans-serif";
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.fillText("🏖  Sandbox (free build)", cx, y + bh / 2);
+    ctx.textBaseline = "alphabetic";
   }
 }
 

@@ -172,6 +172,36 @@ const levels3c = await page.evaluate(async () => {
   };
 });
 
+// --- Phase 4: audio engine + exam tips + sandbox ---
+const phase4 = await page.evaluate(async () => {
+  // Audio engine exports singleton.
+  const am = await import("./src/engine/audio.js");
+  const audioOk = typeof am.audio?.play === "function";
+
+  // Exam tips on catalog services.
+  const cat = await import("./src/services/catalog.js");
+  const S = cat.SERVICES;
+  const servicesWithTips = Object.values(S).filter((s) => s.examTip).length;
+  const natTip = S.nat_gateway?.examTip?.includes("$0.045") ?? false;
+
+  // Exam tips on levels.
+  const m = await import("./src/levels/levels.js");
+  const levelsWithTips = Object.values(m.LEVELS).filter((l) => l.examTip).length;
+  const sandboxExists = !!m.LEVELS.sandbox;
+  const sandboxNoGoal = m.LEVELS.sandbox?.goalRequests === 0;
+  const sandboxNotInOrder = !m.LEVEL_ORDER.includes("sandbox");
+
+  return {
+    audioOk,
+    servicesWithTips,
+    natTip,
+    levelsWithTips,
+    sandboxExists,
+    sandboxNoGoal,
+    sandboxNotInOrder,
+  };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -221,6 +251,17 @@ if (levels3c.levelCount !== 7)      problems.push("LEVEL_ORDER should have 7 lev
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
 if (!levels3c.singleWriterIsLast)   problems.push("single_writer should be last level");
+console.log("phase4:", JSON.stringify(phase4));
+
+// Phase 4 assertions.
+if (!phase4.audioOk)                problems.push("AudioEngine.play is not a function");
+if (phase4.servicesWithTips < 18)   problems.push("fewer than 18 services have examTip");
+if (!phase4.natTip)                 problems.push("nat_gateway examTip should mention $0.045");
+if (phase4.levelsWithTips < 7)      problems.push("fewer than 7 levels have examTip");
+if (!phase4.sandboxExists)          problems.push("sandbox level missing");
+if (!phase4.sandboxNoGoal)          problems.push("sandbox goalRequests should be 0");
+if (!phase4.sandboxNotInOrder)      problems.push("sandbox should not be in LEVEL_ORDER");
+
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 
 process.exit(errors.length || problems.length ? 1 : 0);

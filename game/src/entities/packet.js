@@ -33,6 +33,8 @@ export class Packet {
     this._computeXY();
     this.prevX = this.x;
     this.prevY = this.y;
+    // Position history for trail rendering (T4.1). Ring of last 3 positions.
+    this._history = [];
   }
 
   // World-space center of a tile key.
@@ -77,6 +79,10 @@ export class Packet {
     }
 
     this._computeXY();
+
+    // Record position in trail history (keep last 3 steps).
+    this._history.push({ x: this.x, y: this.y });
+    if (this._history.length > 3) this._history.shift();
   }
 
   // Render interpolation helper: blend prev->cur by alpha for buttery motion.
