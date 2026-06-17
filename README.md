@@ -39,9 +39,17 @@ Gap-driven SAA-C03 reference. Highlights:
 
 ## The game (`game/`)
 
-A grid builder + tower-defense routing sim. Place AWS service buildings, wire **Route 53 gate → compute → database**, and watch request guests flow. Completed round-trips earn revenue; dead-ended trips are lost. See **[`game/README.md`](game/README.md)** for full controls and architecture.
+A grid builder + tower-defense routing sim. Place AWS service buildings, wire **Route 53 gate → compute → database**, and watch request guests flow while a live AWS bill draws down your budget. Completed round-trips earn revenue; dead-ended trips are lost; escalating waves and incidents (AZ failures, traffic spikes, cost audits, Spot interruptions) test your design. See **[`game/README.md`](game/README.md)** for full controls and architecture.
 
-**Status: Phase 1 (playable core).** Economy/waves/win-lose (Phase 2), gap-mapped teaching puzzles (Phase 3), and the full juice/audio/accessibility pass (Phase 4) are planned — see **[`backlog.md`](backlog.md)**.
+**Status: feature-complete campaign.** **17 levels + an endless sandbox**, covering **every SAA-C03 exam domain** (Secure / Resilient / High-Performing / Cost-Optimized) — each boss level is a real architecture decision the exam tests. Highlights:
+
+- **23 AWS services** across 6 build-palette tabs (Net, Compute, Data, DB, Msg, Security), each with stats + an exam tip.
+- **Typed connections** — wires carry a real networking construct: **VPC link, VPC Peering, Transit Gateway, PrivateLink** — each with its own cost, topology rule, and **transitive-routing** behavior (peering is non-transitive; TGW is a transitive hub).
+- **Realistic economy** — per-tile running cost + data-transfer billing modeled on AWS: intra-AZ free, **cross-AZ 8×**, NAT processing ×8, Gateway Endpoint ≈ free; cost audits inflate the bill.
+- **Per-level win conditions** that enforce the lesson (reach S3 only via a Gateway Endpoint; serve reads from a Read Replica; buffer a spike through SQS; fan out via SNS; archive cold data to Glacier; buy steady compute Reserved, not On-Demand).
+- **Difficulty tiers**, procedural audio (zero-dep Web Audio), particle/trail juice, a structural **dependency model** (a Read Replica needs its primary on the board), and exam-tip teaching cards before and after each level.
+
+See **[`backlog.md`](backlog.md)** for the full phase history and what's next (multi-region DR, a secrets tile, perf/QA pass).
 
 ---
 
@@ -64,11 +72,13 @@ A grid builder + tower-defense routing sim. Place AWS service buildings, wire **
 | Phase | Scope | Status |
 |------|-------|--------|
 | 1 | Playable core: grid, build palette, wiring, request routing | ✅ done |
-| 2 | Economy, AWS bill meter, traffic waves, win/lose | planned |
-| 3 | Gap-mapped teaching levels (the Priority Gaps as boss puzzles) | planned |
-| 4 | Theme art, audio, tutorial, accessibility, polish | planned |
+| 2 | Economy, AWS bill meter, traffic waves, win/lose, scoring | ✅ done |
+| 3 | Difficulty tiers, diagonal/any-distance wiring, broad catalog, gap-mapped boss levels | ✅ done |
+| 4 | Procedural audio, particles/trails, exam tips, sandbox mode | ✅ done |
+| 5 | Typed connections (VPC / Peering / Transit Gateway / PrivateLink) + transitive routing | ✅ done |
+| 6 | Full SAA-C03 curriculum coverage — boss levels for every exam domain | ✅ done |
 
-Full task breakdown in [`backlog.md`](backlog.md).
+Remaining: enrichment (multi-region DR, secrets tile) + a final perf/QA pass. Full task breakdown in [`backlog.md`](backlog.md).
 
 ## Development
 
