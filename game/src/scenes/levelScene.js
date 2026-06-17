@@ -18,7 +18,7 @@ import { SERVICES, getService, canConnect } from "../services/catalog.js";
 import { findRoundTrip, gateHasRoute } from "../grid/pathfind.js";
 import { Packet } from "../entities/packet.js";
 import { BuildPalette } from "../ui/palette.js";
-import { drawHUD, drawHints, drawEventBanner } from "../ui/hud.js";
+import { drawHUD, drawEventBanner } from "../ui/hud.js";
 import {
   drawFloor,
   drawWires,
@@ -790,14 +790,6 @@ export class LevelScene extends Scene {
     // Persistent one-line objective (always visible, top-center) — keeps the
     // core goal + flow on screen after the briefing closes.
     this._renderObjective(ctx, W);
-
-    // Control hints.
-    drawHints(
-      ctx,
-      W,
-      H,
-      "Build: click a tile  •  Wire: drag between neighbors  •  Cut: right-click wire  •  H: help  •  Esc: menu"
-    );
 
     // Briefing overlay — stays up (sim paused) until the shift begins.
     if (!this.started) this._renderBriefing(ctx, W, H);
