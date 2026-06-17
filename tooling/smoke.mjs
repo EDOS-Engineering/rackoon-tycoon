@@ -692,6 +692,42 @@ const regionDR = await page.evaluate(async () => {
   return { primaryMultiAzDown, drComputeUp, gateUp, drRouteSurvives };
 });
 
+// Company Run Report: cashing out a freerun run hands the results scene a
+// company-shaped payload (mode + milestone eval + ops scorecard) so it renders
+// the dedicated report instead of the scenario verdict.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "company" }));
+await page.waitForTimeout(300);
+await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  s.started = true;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.place(S.rds, gc + 2, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  s._routeDirty = true;
+});
+await page.waitForTimeout(1500);
+await page.evaluate(() => {
+  const s = window.__rackoon.scenes.current;
+  s.outcome = "win"; s.outcomeReason = "cashout"; s._goToResults();
+});
+await page.waitForTimeout(400);
+const runReport = await page.evaluate(() => {
+  const rs = window.__rackoon.scenes.current;
+  const r = rs.r || {};
+  return {
+    scene: rs.constructor.name,
+    isCompany: rs.isCompany === true,
+    mode: r.mode,
+    milestoneTotal: r.milestones ? r.milestones.total : -1,
+    hasOps: !!(r.ops && typeof r.ops.sloCompliance === "number"),
+    sloPresent: !!(r.ops && r.ops.sloCompliance != null),
+  };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -722,6 +758,7 @@ console.log("cost6d:", JSON.stringify(cost6d));
 console.log("coldWin:", JSON.stringify(coldWin));
 console.log("rightWin:", JSON.stringify(rightWin));
 console.log("regionDR:", JSON.stringify(regionDR));
+console.log("runReport:", JSON.stringify(runReport));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -866,6 +903,12 @@ if (!regionDR.primaryMultiAzDown)   problems.push("across_the_region: Multi-AZ i
 if (!regionDR.drComputeUp)          problems.push("across_the_region: DR-region tiles should survive a region failure");
 if (!regionDR.gateUp)               problems.push("across_the_region: the global Route 53 gate should survive a region failure");
 if (!regionDR.drRouteSurvives)      problems.push("across_the_region: a DR-region route should keep serving through the outage");
+// Company Run Report.
+if (runReport.scene !== "ResultsScene") problems.push("company cash-out should transition to the results scene");
+if (!runReport.isCompany)           problems.push("company results should flag isCompany (render the Run Report)");
+if (runReport.mode !== "freerun")   problems.push("company results payload should carry mode=freerun");
+if (runReport.milestoneTotal !== 4) problems.push("company Run Report should carry the 4 milestones");
+if (!runReport.hasOps || !runReport.sloPresent) problems.push("company Run Report should carry the ops scorecard (SLO etc.)");
 
 console.log("phase4:", JSON.stringify(phase4));
 

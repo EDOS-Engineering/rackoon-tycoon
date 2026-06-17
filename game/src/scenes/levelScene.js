@@ -397,6 +397,19 @@ export class LevelScene extends Scene {
       score: sc.value,
       stars: sc.stars,
       factors: sc.factors,
+      // ---- Company (freerun) Run Report (mode set → results renders the report) ----
+      mode: this.sim.mode,
+      milestones: this._isFreerun ? this.sim.evaluateMilestones() : null,
+      ops: this._isFreerun
+        ? {
+            sloCompliance: this.sim.realism.sloCompliance,
+            peakBlastRadius: this.sim.realism.peakBlastRadius,
+            worstRtoSec: this.sim.realism.worstRtoSec,
+            dataLost: this.sim.realism.dataLost,
+            peakConcurrent: this.sim.peakConcurrent,
+            simDays: this.sim.simDays,
+          }
+        : null,
     });
   }
 
