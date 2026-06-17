@@ -10,6 +10,15 @@
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 - **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
 - **2026-06-17 — Phase 7 kickoff: architecture review + R2 (seedable RNG + headless harness).** Ran an architecture review (research subagent + `/improve-codebase-architecture`): the helper sim modules are clean seams but the simulation that composes them lives inside the 1616-line `LevelScene`; no headless sim; unseeded sim-path RNG. Recorded the architecture-first plan (R1–R6) + order + locked design decisions (time-compressed clock; both win models — milestone scenarios + endless free-run). Shipped **R2** (the first, decision-independent step): new `sim/rng.js` (mulberry32 seedable PRNG) threaded through the two sim-path randoms (`EventDirector` AZ-zone pick, `LoadModel.shouldDrop`), defaulting to `Math.random` for back-compat; new `tooling/headless.mjs` runs the sim modules under Node with no canvas and asserts seeded determinism. Removed the Sandbox "Cash Out" button (overlapped the reinvest slider, no goal to wrap up; Esc exits). → `sim/rng.js`, `waves/{events,load}.js`, `scenes/levelScene.js`, `tooling/headless.mjs`. headless 0 problems; browser smoke 0/0.
+- **2026-06-17 — Phase 7 T7.5 telemetry depth (feature branch).** New `sim/telemetry.js`
+  `Telemetry` derives the live operator instrument panel from sim state: **demand** (current
+  + rolling sparkline), **margin $/s** (revenue rate − burn, smoothed), **SLO burn**
+  (error-budget burn vs allowed, off a new `sloTarget`), and **headroom** (1 − busiest
+  serving load). `Simulation.telemetry()` exposes a snapshot; the OPS-TELEMETRY HUD chip
+  became a full panel (outcome row + operator-signal row + demand sparkline). Headless reads
+  the signals for curve tuning (min-headroom / peak-demand sweep) and asserts they're sane,
+  curve-tracking, and deterministic. → `sim/{telemetry,simulation}.js`, `scenes/levelScene.js`,
+  `tooling/headless.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — Phase 7 T7.6 realism polish (feature branch).** New `sim/realism.js`
   `RealismTracker` rolls up four operational signals real architects answer to: **latency-SLO
   compliance**, **blast radius** (peak capacity-weighted fraction an incident downs), **RTO**
@@ -413,8 +422,16 @@ Epoch makes the world *alive*.
   or save-and-resume) with milestones (users served, uptime SLOs, margin targets)
   instead of a single goalRequests number. Build a system that *survives and grows*.
   → new mode in `levels.js` + persistence in `save/`.
-- **T7.5 Balancing + telemetry** — surface the live signals (demand curve, margin,
-  SLO burn, headroom) so the player can reason like an operator; tune curves headlessly.
+- **T7.5 Balancing + telemetry. ✅ DONE (2026-06-17).** New `sim/telemetry.js` `Telemetry`
+  (pure derivation over sim state) computes the live operator instrument panel: **demand**
+  (current multiplier + a rolling sparkline history), **margin $/s** (revenue rate − burn,
+  EMA-smoothed), **SLO burn** (error-budget burn vs the allowed rate, off a new `sloTarget`),
+  and **headroom** (1 − busiest serving tile's load). `Simulation` updates it each step and
+  exposes `telemetry()`. The level's OPS-TELEMETRY HUD chip grew into a full panel: the T7.6
+  outcome row, the T7.5 operator-signal row, and a demand sparkline. Headless reads the
+  signals to tune curves (min-headroom / peak-demand sweep) and asserts they're sane,
+  curve-tracking, and **deterministic** for a fixed seed. → `sim/{telemetry,simulation}.js`,
+  `scenes/levelScene.js`, `tooling/headless.mjs`. headless 0; smoke 0/0.
 - **T7.6 Realism deepening. ✅ DONE (2026-06-17).** New `sim/realism.js` `RealismTracker`
   (pure) rolls up the four ops numbers a real review grades: **latency-SLO compliance**
   (served round-trips under `sloMs`), **blast radius** (peak capacity-weighted fraction an

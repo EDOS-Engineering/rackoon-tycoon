@@ -357,6 +357,44 @@ if (!(cm.sloCompliance >= 0 && cm.sloCompliance <= 1)) problems.push("realism: s
 if (!(cm.peakBlastRadius >= 0 && cm.peakBlastRadius <= 1)) problems.push("realism: peakBlastRadius out of [0,1] in a real run");
 if (typeof cm.worstRtoSec !== "number" || typeof cm.dataLost !== "number") problems.push("realism: RTO/RPO metrics missing from a real run");
 
+// 11. Operator telemetry + headless balancing (Phase 7 T7.5): the live signals a
+//     tuner reads — demand (sparkline), margin, SLO burn, headroom — derived from
+//     the sim, deterministic, and trackable across a run for curve tuning.
+function runCompanyTel(seed) {
+  const sim = buildCompany(seed);
+  let minHeadroom = 1;
+  let peakDemand = 0;
+  for (let i = 0; i < 1800; i++) {
+    sim.recomputeRoute();
+    sim.step(1 / 60);
+    sim.drainEmitted();
+    const t = sim.telemetry();
+    if (t.headroom < minHeadroom) minHeadroom = t.headroom;
+    if (t.demandNow > peakDemand) peakDemand = t.demandNow;
+  }
+  return { sim, tel: sim.telemetry(), minHeadroom, peakDemand };
+}
+const telA = runCompanyTel(31);
+const telB = runCompanyTel(31);
+const tl = telA.tel;
+if (!(tl.demandNow > 0)) problems.push("telemetry: demandNow should be positive on a demand level");
+if (!(tl.headroom >= 0 && tl.headroom <= 1)) problems.push("telemetry: headroom out of [0,1]");
+if (!(tl.sloBurn >= 0)) problems.push("telemetry: SLO burn should be ≥ 0");
+if (!(Array.isArray(tl.demandHist) && tl.demandHist.length > 1)) problems.push("telemetry: demand sparkline history not populated");
+if (typeof tl.marginPerSec !== "number") problems.push("telemetry: margin must be a number");
+// demandNow must track the live demand curve.
+if (Math.abs(tl.demandNow - telA.sim.demand.rateAt(telA.sim.simTime)) > 1e-9)
+  problems.push("telemetry: demandNow should equal the demand curve at the current time");
+// Deterministic for a fixed seed — the balancer can rely on repeatable signals.
+const telDet =
+  telA.minHeadroom === telB.minHeadroom &&
+  telA.peakDemand === telB.peakDemand &&
+  tl.demandHist[tl.demandHist.length - 1] === telB.tel.demandHist[telB.tel.demandHist.length - 1];
+if (!telDet) problems.push("telemetry: balancing signals must be deterministic for a fixed seed");
+// A headroom sweep is a real balancing signal: under the company's growth curve,
+// peak demand should exceed the baseline (the curve is doing its job).
+if (!(telA.peakDemand > 1)) problems.push("telemetry: peak demand should rise above baseline over a run");
+
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
 console.log("headless run billTotal:", bill.totalSpent.toFixed(2));
@@ -372,5 +410,6 @@ console.log("incident deck draws(seed101):", dkA.length, " firstGap:", firstGap.
 console.log("deck sim run:", JSON.stringify({ scripted: scriptedCount, withDeck: deckRunA.incidents, outcome: deckRunA.outcome, deterministic: JSON.stringify(deckRunA) === JSON.stringify(deckRunB) }));
 console.log("company run:", JSON.stringify({ mode: co.mode, success: co.success, budget: Math.round(co.budget), day: +co.simDays.toFixed(1), milestones: mEvalRun.doneCount + "/" + mEvalRun.total, snapshotRestored: sameState }));
 console.log("realism:", JSON.stringify({ slo: +cm.sloCompliance.toFixed(3), peakBlast: +cm.peakBlastRadius.toFixed(3), worstRto: +cm.worstRtoSec.toFixed(1), dataLost: cm.dataLost, warmRamp: warm1.toFixed(1) + "→" + warm2.toFixed(1) + " (base " + baseCap + ")" }));
+console.log("telemetry:", JSON.stringify({ demandNow: +tl.demandNow.toFixed(2), margin: +tl.marginPerSec.toFixed(2), sloBurn: +tl.sloBurn.toFixed(2), headroom: +tl.headroom.toFixed(2), minHeadroom: +telA.minHeadroom.toFixed(2), peakDemand: +telA.peakDemand.toFixed(2), deterministic: telDet }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);
