@@ -638,7 +638,7 @@ export const LEVELS = {
       { id: "rds", col: 12, row: 4 },
     ],
     goalRequests: 85,
-    next: "across_the_region",
+    next: "secret_keeper",
     waves: [
       { name: "Baseline",     duration: 22, rate: 1.2 },
       { name: "Steady state", duration: 30, rate: 1.5 },
@@ -663,6 +663,43 @@ export const LEVELS = {
       "A steady, predictable baseline runs all day. Paying full On-Demand rates for always-on capacity is the expensive way — and over-relying on Spot will bite you when AWS reclaims it.\n\nMatch purchasing to the workload: a Reserved Instance / Savings Plan commits to the steady base for ~40–60% off On-Demand. Spot is up to 90% off but interruptible — only for fault-tolerant work. A spot-interruption event WILL hit during this shift.\n\nFront the database with Reserved compute (Compute tab). Leave full-price On-Demand EC2 out.\n\n⚠ WIN CONDITION: serve the load with Reserved (or Spot) compute, not On-Demand EC2.\n\nRoute 85 to win.",
     examTip:
       "Purchasing options: On-Demand (flexible, priciest — short/unpredictable), Reserved Instances / Savings Plans (commit 1–3 yr for steady baseline, big discount — Savings Plans flex across families/regions), Spot (up to 90% off, interruptible — batch/CI/stateless fault-tolerant). Cost-optimal fleets mix Reserved baseline + Spot/On-Demand for bursts.",
+  },
+
+  // T6.3 — Domain: Secure. No hard-coded credentials: broker the DB connection
+  // through Secrets Manager (encrypted, auto-rotated).
+  secret_keeper: {
+    id: "secret_keeper",
+    name: "Secret Keeper",
+    subtitle: "No hard-coded credentials in the app",
+    cols: 16,
+    rows: 9,
+    budget: 2400,
+    spawnRate: 0.95,
+    gates: [{ col: 1, row: 4 }],
+    seed: [
+      { id: "rds", col: 12, row: 4 },
+    ],
+    goalRequests: 65,
+    next: "across_the_region",
+    waves: [
+      { name: "Warm-up",       duration: 18, rate: 0.9 },
+      { name: "Steady flow",   duration: 28, rate: 1.5 },
+      { name: "Security review", duration: 26, rate: 1.7 },
+      { name: "Wind-down",     duration: 16, rate: 1.1 },
+    ],
+    events: [
+      { at: 34, kind: "cost_audit", duration: 14, warn: 6, magnitude: 1.5 },
+    ],
+    slaMaxDropRate: 0.34,
+    // Win requires brokering the DB credentials through Secrets Manager.
+    winRequires: {
+      pathContainsAll: ["secrets_manager"],
+      requirementHint: "Broker the database credentials through Secrets Manager (Security tab) — never hard-code them in the application",
+    },
+    intro:
+      "The app connects straight to the database with credentials baked into its code — a hard-coded secret one leak away from a breach. Security says fix it before launch.\n\nAWS Secrets Manager stores credentials encrypted (KMS) and rotates them automatically. The application fetches the secret at runtime; nothing sensitive lives in code, AMIs, or env files.\n\nRoute the database connection through Secrets Manager (Security tab) so the credentials are brokered, not embedded.\n\n⚠ WIN CONDITION: the route reaches the DB through Secrets Manager.\n\nRoute 65 to win.",
+    examTip:
+      "Secrets Manager: encrypted storage + automatic rotation (managed for RDS/Redshift/DocumentDB), fine-grained IAM, cross-account/region replication. SSM Parameter Store SecureString is cheaper but has no built-in rotation. Pair with IAM roles (no long-lived keys) and KMS. Hard-coded credentials are an automatic exam wrong-answer.",
   },
 
   // T6.6 — Domain: Resilient. Survive a whole-region outage with a multi-region
@@ -742,6 +779,7 @@ export const LEVEL_ORDER = [
   "serverless_spike",
   "cold_storage",
   "right_price",
+  "secret_keeper",
   "across_the_region",
 ];
 

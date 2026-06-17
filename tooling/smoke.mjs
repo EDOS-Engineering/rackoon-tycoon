@@ -183,7 +183,9 @@ const levels3c = await page.evaluate(async () => {
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
     lastIsRegion: m.LEVEL_ORDER.at(-1) === "across_the_region",
-    rightPriceNextRegion: rp?.next === "across_the_region",
+    rightPriceNextSecret: rp?.next === "secret_keeper",
+    secretNeedsManager: (m.LEVELS.secret_keeper?.winRequires?.pathContainsAll || []).includes("secrets_manager"),
+    secretNextRegion: m.LEVELS.secret_keeper?.next === "across_the_region",
     regionHasFailureEvent: (ar?.events || []).some((e) => e.kind === "region_failure"),
     serverlessNextCold: ss?.next === "cold_storage",
     coldNeedsGlacier: (cs?.winRequires?.sinkIs || []).includes("s3_glacier"),
@@ -754,11 +756,13 @@ if (catalog3b.groupCount !== 6)        problems.push("PALETTE_GROUPS should have
 if (catalog3b.sqsBuffers !== 0.5)      problems.push("SQS should buffer spikes (attackMitigation 0.5)");
 if (!catalog3b.snsExists)              problems.push("SNS service missing");
 if (!catalog3b.msgGroup)               problems.push("PALETTE_GROUPS should include the integration/Msg group");
-if (levels3c.levelCount !== 18)     problems.push("LEVEL_ORDER should have 18 levels");
+if (levels3c.levelCount !== 19)     problems.push("LEVEL_ORDER should have 19 levels");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
 if (!levels3c.lastIsRegion)         problems.push("across_the_region should be the last level");
-if (!levels3c.rightPriceNextRegion) problems.push("right_price.next should chain to across_the_region");
+if (!levels3c.rightPriceNextSecret) problems.push("right_price.next should chain to secret_keeper");
+if (!levels3c.secretNeedsManager)   problems.push("secret_keeper should require secrets_manager in the route");
+if (!levels3c.secretNextRegion)     problems.push("secret_keeper.next should chain to across_the_region");
 if (!levels3c.regionHasFailureEvent) problems.push("across_the_region should schedule a region_failure event");
 if (!levels3c.serverlessNextCold)   problems.push("serverless_spike.next should chain to cold_storage");
 if (!levels3c.coldNeedsGlacier)     problems.push("cold_storage should require the s3_glacier sink");

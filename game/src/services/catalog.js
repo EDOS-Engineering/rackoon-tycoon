@@ -439,6 +439,24 @@ export const SERVICES = {
       "Spot = cheapest, interruptible (2-min warning) — great for batch, CI, stateless/fault-tolerant fleets, never for a stateful single instance. Mix Spot + On-Demand/Reserved in an ASG for cost + resilience. Steady baseline → Reserved; spiky → On-Demand/serverless.",
   },
 
+  // ---- Security / identity ----
+  secrets_manager: {
+    id: "secrets_manager",
+    label: "Secrets Manager",
+    short: "Secrets",
+    emoji: "🔐",
+    role: ROLE.EDGE,
+    color: "#9d4edd",
+    cost: 25,
+    throughput: 200,
+    latency: 1,
+    placeable: true,
+    blurb:
+      "AWS Secrets Manager — stores database credentials and API keys encrypted (KMS) with automatic rotation. Apps fetch secrets at runtime instead of hard-coding them. Broker the DB connection through it.",
+    examTip:
+      "Secrets Manager = encrypted secret storage + automatic rotation (built-in for RDS/Redshift/DocumentDB), fine-grained IAM, cross-account/region. SSM Parameter Store SecureString is the cheaper option without managed rotation. Never hard-code credentials or bake them into AMIs/code/env files.",
+  },
+
   // ---- Integration / decoupling ----
   sqs: {
     id: "sqs",
@@ -487,7 +505,7 @@ export const PALETTE_GROUPS = [
   { id: "data",     label: "Data",     ids: ["kinesis_firehose", "s3", "s3_glacier"] },
   { id: "database", label: "DB",       ids: ["rds", "rds_multiaz", "rds_replica", "dynamodb", "aurora_sv2", "aurora_limitless"] },
   { id: "integration", label: "Msg",   ids: ["sqs", "sns"] },
-  { id: "security", label: "Security", ids: ["waf", "shield"] },
+  { id: "security", label: "Security", ids: ["waf", "shield", "secrets_manager"] },
 ];
 
 // Flat ordered list (all placeable services) — kept for smoke tests / iteration.
