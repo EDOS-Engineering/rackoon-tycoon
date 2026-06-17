@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forge Setup — Rackoon Tycoon Deployment Plan</title>
+<style>
+  :root{--bg:#0c1014;--panel:#11161d;--panel2:#161d26;--text:#e8edf2;--muted:#9fb0c0;--dim:#5e6e7e;--accent:#ffb347;--accent2:#ff9f4a;--line:rgba(255,255,255,.08);--good:#7ee787}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(circle at 50% -10%,#1a212b 0%,#0c1014 60%);color:var(--text);font:15px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh}
+  .wrap{max-width:900px;margin:0 auto;padding:28px 20px 80px}
+  .crumb{font-size:13px;color:var(--muted);margin-bottom:14px}
+  .crumb a{color:var(--accent2);text-decoration:none}
+  h1{font-size:25px;font-weight:800;margin:4px 0 2px}
+  h1 span{color:var(--accent)}
+  .tag{color:var(--muted);font-size:14px;margin:0 0 18px}
+  h2{font-size:18px;margin:30px 0 8px;color:var(--accent);border-bottom:1px solid var(--line);padding-bottom:6px}
+  h3{font-size:15px;margin:18px 0 6px}
+  p{margin:10px 0}
+  a{color:var(--accent2)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#ffd9a0}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-size:12.5px;line-height:1.5}
+  pre code{background:none;padding:0;color:#cfe3f5}
+  ol li,ul li{margin:5px 0}
+  ol.steps{counter-reset:s;list-style:none;padding-left:0}
+  ol.steps>li{counter-increment:s;position:relative;padding:8px 0 8px 40px;border-bottom:1px solid var(--line)}
+  ol.steps>li::before{content:counter(s);position:absolute;left:0;top:8px;width:26px;height:26px;border-radius:50%;background:var(--panel2);border:1px solid var(--accent);color:var(--accent);font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .note{border-left:3px solid var(--accent);background:rgba(255,179,71,.07);padding:10px 14px;border-radius:0 8px 8px 0;margin:14px 0}
+  .ok{border-left-color:var(--good);background:rgba(126,231,135,.07)}
+  footer{margin-top:48px;color:var(--dim);font-size:12px;text-align:center;border-top:1px solid var(--line);padding-top:18px}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="crumb"><a href="index.html">← Deployment Plan</a> · Forge Setup</div>
+  <h1>2 · <span>Forge</span> Setup</h1>
+  <p class="tag">Create a Static HTML site for <code>rackoon.cloud</code> on the existing server, connect the repo, set the web directory, enable SSL, and wire the deploy script. <span class="pill">no build step</span></p>
+
+  <h2>URL layout — the decision</h2>
+  <div class="note ok">
+    <b>Recommended layout:</b>
+    <ul style="margin:8px 0 0">
+      <li><code>https://rackoon.cloud/</code> → <b>the game</b> (redirect <code>/</code> to <code>/game/game.html</code>).</li>
+      <li><code>https://rackoon.cloud/study</code> → <b>the SAA-C03 study guide</b> (the repo's root <code>index.html</code>).</li>
+      <li><code>https://rackoon.cloud/game/…</code> → game assets/modules, served as-is.</li>
+    </ul>
+  </div>
+  <p>The game is the headline experience, so it owns <code>/</code>. The study guide gets a clean <code>/study</code> path. Because the repo has <b>no build step</b>, we serve the repository root directly and shape the URLs entirely in nginx — no file moves, no copies.</p>
+
+  <div class="note">
+    <b>⚠ Note for the human (do not let CI fix this).</b> <code>game/game.html</code> has a hard-coded link back to the study guide as <code>../index.html</code>. Served at <code>/game/game.html</code>, that link resolves to <code>/index.html</code> — which (with the redirect below) bounces to the game, <b>not</b> the study guide. Two clean options, your call:
+    <ul style="margin:8px 0 0">
+      <li><b>(A) nginx-only, no code change (used below):</b> keep <code>/index.html</code> served literally as the study guide and only redirect the <em>bare</em> <code>/</code> to the game. Then <code>../index.html</code> still lands on the study guide, and <code>/study</code> is an extra alias. Simplest; ships today.</li>
+      <li><b>(B) one-line code change (cleaner, do later):</b> change the link in <code>game/game.html</code> from <code>../index.html</code> to <code>/study</code>, then redirect <code>/index.html</code> → <code>/study</code> too. This is a tweak to an existing file, so it is <b>noted here, not done</b> by this plan.</li>
+    </ul>
+    The nginx block below implements <b>(A)</b> so it works with the repo exactly as-is.
+  </div>
+
+  <h2>Step-by-step in the Forge UI</h2>
+  <ol class="steps">
+    <li>Open <b>Forge → your existing server</b>. Under <b>Sites</b>, click <b>New Site</b>.</li>
+    <li><b>Root Domain:</b> <code>rackoon.cloud</code>. <b>Project Type:</b> <b>Static HTML / Nuxt / etc.</b> (the "Static HTML" option — no PHP runtime needed). Add <code>www.rackoon.cloud</code> under <b>Aliases</b>. Create the site.</li>
+    <li>On the new site: <b>Git Repository</b> → <b>Install Repository</b>. Provider <b>GitHub</b>, repository <code>EDOS-Engineering/rackoon-tycoon</code>, branch <code>main</code>. <b>Uncheck</b> "Install Composer Dependencies" (there are none).</li>
+    <li><b>Web directory.</b> The repo serves from its own root (the game lives at <code>game/</code>, the study guide at the root <code>index.html</code>), so set the site's <b>Web Directory</b> to <code>/</code> (i.e. the repo root, not <code>/public</code>). The deploy path on disk is typically <code>/home/forge/rackoon.cloud</code>.</li>
+    <li><b>Deploy script.</b> Forge → site → <b>Deployment</b> tab → edit the deploy script to the no-build version (below). Save.</li>
+    <li><b>nginx config.</b> Forge → site → <b>⋯ menu → Edit Nginx Configuration</b>. Replace the <code>location /</code> block (and add the helpers) with the config below. Save — Forge validates and reloads nginx.</li>
+    <li><b>SSL.</b> Forge → site → <b>SSL</b> → <b>Let's Encrypt</b> → include <code>rackoon.cloud</code> and <code>www.rackoon.cloud</code> → <b>Obtain Certificate</b>. (DNS must already resolve to the droplet — see DNS page.) Then toggle <b>Force HTTPS</b> on.</li>
+    <li><b>First deploy.</b> Click <b>Deploy Now</b> once to pull the repo and confirm the site renders. After this, deploys come from GitHub Actions (see next page).</li>
+  </ol>
+
+  <h2>Deploy script (no build)</h2>
+  <p>Forge runs this on the droplet on each deploy. Pure git pull — no npm, no bundler.</p>
+  <pre><code>cd /home/forge/rackoon.cloud
+
+# Fetch and hard-reset to the deployed branch so the working tree always
+# matches origin/main exactly (avoids "local changes" stalls on a static repo).
+git fetch origin main
+git reset --hard origin/main
+
+# No build step: zero runtime deps, no bundler. Static files are served as-is.
+# nginx serves the new files immediately; no reload needed for content changes.
+echo "Deployed rackoon.cloud @ $(git rev-parse --short HEAD)"</code></pre>
+  <p class="note">Forge auto-wraps this so a deploy already in progress won't overlap. Keep the script idempotent (the <code>reset --hard</code> guarantees that).</p>
+
+  <h2>nginx — URL layout + correct MIME types</h2>
+  <p>Paste into the site's nginx config, replacing the default <code>location /</code>. <code>root</code> is the deploy path; Forge fills the rest of the server block (TLS, logs).</p>
+  <pre><code># --- Rackoon Tycoon static layout ---------------------------------
+# root is the repo root on disk (Forge sets this in the server block):
+#   root /home/forge/rackoon.cloud;
+
+# Make sure JS / ES modules ship as text/javascript (browsers refuse to
+# execute modules served as the wrong MIME type). Forge's mime.types maps
+# .js already on modern nginx; .mjs may not be — force both to be safe.
+types {
+    text/javascript  js mjs;
+}
+
+# Bare site root → the game (headline experience).
+location = / {
+    return 302 /game/game.html;
+}
+
+# Study guide at a clean path. alias maps /study and /study/ to the repo
+# root index.html (the SAA-C03 guide). try_files keeps it a single page.
+location = /study {
+    alias /home/forge/rackoon.cloud/index.html;
+    default_type text/html;
+}
+location = /study/ {
+    alias /home/forge/rackoon.cloud/index.html;
+    default_type text/html;
+}
+
+# Everything else: serve the static file if it exists, else 404.
+# This serves /game/game.html, /game/src/*.js, /index.html (the study
+# guide, kept literal so the game's ../index.html back-link still works),
+# images, etc. No SPA fallback — every URL is a real file.
+location / {
+    try_files $uri $uri/ =404;
+}
+
+# Long cache for fingerprint-free static assets is handled per-type in the
+# Security &amp; Rollback page (HTML no-cache, JS/img long-cache). Add those
+# location blocks here too.
+# ------------------------------------------------------------------</code></pre>
+
+  <div class="note ok"><b>Why this works with no build:</b> the repo is already a valid static tree. nginx serves it verbatim; the only shaping is one redirect (<code>/</code> → game), two aliases (<code>/study</code>), and a MIME override for <code>.mjs</code>. Nothing is compiled, copied, or rewritten on disk.</div>
+
+  <footer>Next: <a href="deploy-pipeline.html">3 · Deploy Pipeline →</a></footer>
+</div>
+</body>
+</html>
