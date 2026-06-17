@@ -32,6 +32,12 @@ export const BILL = {
   // under-provisioned resources cost more. Right-sizing (removing idle tiers,
   // matching capacity to demand) keeps it near zero. Core SAA cost lesson.
   driftSurcharge: 0.6,
+  // Sim-depth: an autoScale tier bills for the capacity it is actually running,
+  // not its base — serverless/ACU pricing. A tier scaled to `cap` bills its base
+  // running cost × (1 + scaleBilling × scaleFrac), where scaleFrac = (cap−base)/base
+  // (set by the load model). So a low auto-scaling target (big headroom) or a high
+  // max-scale ceiling costs real money under load — the policy is a cost↔SLO trade.
+  scaleBilling: 1.0,
 };
 
 export class BillMeter {
@@ -67,7 +73,7 @@ export class BillMeter {
     let sum = 0;
     for (const b of grid.buildings.values()) {
       const base = (b.service.cost || 0) / BILL.rateDivisor;
-      const drifted = base * (1 + BILL.driftSurcharge * (b.drift || 0));
+      const drifted = base * (1 + BILL.driftSurcharge * (b.drift || 0)) * scaleMul(b);
       const disc = roleDiscount ? roleDiscount[b.service.role] || 0 : 0;
       sum += drifted * (1 - disc);
     }
@@ -82,7 +88,7 @@ export class BillMeter {
     for (const b of grid.buildings.values()) {
       const disc = roleDiscount[b.service.role] || 0;
       if (!disc) continue;
-      const drifted = ((b.service.cost || 0) / BILL.rateDivisor) * (1 + BILL.driftSurcharge * (b.drift || 0));
+      const drifted = ((b.service.cost || 0) / BILL.rateDivisor) * (1 + BILL.driftSurcharge * (b.drift || 0)) * scaleMul(b);
       saved += drifted * disc;
     }
     return saved;
@@ -131,4 +137,12 @@ export class BillMeter {
       transfer: this.transferSpent,
     };
   }
+}
+
+// Per-tile running-cost multiplier from auto-scaling: an autoScale tier running
+// above base capacity bills for the extra. Non-autoscale tiles bill flat (1).
+function scaleMul(b) {
+  if (!b.service.autoScale) return 1;
+  const frac = b.scaleFrac > 0 ? b.scaleFrac : 0;
+  return 1 + BILL.scaleBilling * frac;
 }

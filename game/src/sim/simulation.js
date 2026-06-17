@@ -28,7 +28,7 @@ import { BillMeter, BILL } from "../economy/billing.js";
 import { Economy, RESERVATION_PLANS } from "../economy/economy.js";
 import { WaveScheduler } from "../waves/scheduler.js";
 import { DemandModel } from "../waves/demand.js";
-import { LoadModel } from "../waves/load.js";
+import { LoadModel, SCALE_POLICY_BOUNDS } from "../waves/load.js";
 import { EventDirector, zoneOfColumn } from "../waves/events.js";
 import { evaluate, OUTCOME } from "../economy/scoring.js";
 import { MilestoneSet } from "./milestones.js";
@@ -388,6 +388,25 @@ export class Simulation {
     return ok;
   }
 
+  // Sim-depth: the live auto-scaling policy (target util / max scale). UI reads
+  // this to render the panel; setScalePolicy mutates it (clamped by the caller).
+  scalePolicy() {
+    return this.loadModel.policy;
+  }
+
+  // Sim-depth: nudge a policy knob by a signed step, clamped to bounds. `knob` is
+  // "targetUtil" or "maxScale". Returns the new value. Emits a click sound.
+  setScalePolicy(knob, delta) {
+    const b = SCALE_POLICY_BOUNDS[knob];
+    if (!b) return null;
+    const pol = this.loadModel.policy;
+    let v = (pol[knob] || 0) + delta;
+    v = Math.max(b.min, Math.min(b.max, Math.round(v / b.step) * b.step));
+    pol[knob] = v;
+    this.emit({ kind: "sound", name: "click" });
+    return v;
+  }
+
   // Live operator telemetry snapshot (T7.5) — demand/margin/SLO-burn/headroom +
   // short sparkline histories. Read by the HUD and the headless balancer.
   telemetry() {
@@ -428,6 +447,7 @@ export class Simulation {
       peakConcurrent: this.peakConcurrent,
       realism: this.realism.toJSON(),
       reinvestRate: this._reinvestRate,
+      scalePolicy: { ...this.loadModel.policy },
       gateKeys: this.gateKeys.slice(),
       buildings,
       edges,
@@ -460,6 +480,7 @@ export class Simulation {
     this.peakConcurrent = snap.peakConcurrent || 0;
     this.realism.restore(snap.realism);
     this._reinvestRate = snap.reinvestRate != null ? snap.reinvestRate : 0.5;
+    if (snap.scalePolicy) this.loadModel.policy = { ...this.loadModel.policy, ...snap.scalePolicy };
     this._routeDirty = true;
   }
 
