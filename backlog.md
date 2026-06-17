@@ -424,13 +424,16 @@ the data-driven catalog/levels pattern):
   (`events.js` AZ-zone pick, `load.js` drop decision — leave cosmetic randoms alone);
   add `tooling/headless.mjs` that runs the sim modules under Node with no canvas.
   This is the test surface for every later step; unblocks T7.5 (headless balancing).
-- **R1 — Extract a `Simulation` core. _(L; highest leverage)_** Lift `_tickSystems` +
-  the spawn loop + `_updatePackets` + `_checkOutcome` out of `LevelScene` into
-  `sim/simulation.js` with one `step(dt)`; no audio/render side-effects inside the
-  step (emit events the scene drains). Keep building runtime fields (`b.load`,
-  `b.disabled`) so the renderer is untouched; keep `s.budget/s.bill/s.success/...`
-  working via delegating getters so the smoke suite stays green. Land as a pure lift
-  (no behaviour change), verified headless + Playwright.
+- **R1 — Extract a `Simulation` core. ✅ DONE (2026-06-17).** Lifted `_tickSystems` +
+  the spawn loop + `_updatePackets` + `_checkOutcome` + win-requires/route/dependency
+  logic out of `LevelScene` into `sim/simulation.js` (one `step(dt)` + `recomputeRoute()`);
+  no audio/render side-effects inside the step — they're pushed onto an `emitted` queue
+  the scene drains (`_drainSim`). Building runtime fields (`b.load`, `b.disabled`,
+  `b.invalid`) still written so the renderer is untouched; `s.budget/s.bill/s.success/...`
+  delegate to the sim via accessors so the smoke suite stayed green. `tooling/headless.mjs`
+  now fast-runs a real `Simulation` (first_light): same seed → byte-identical run to a
+  win with an accruing bill. Pure lift, no behaviour change. headless 0 problems; browser
+  smoke 0/0. → `sim/simulation.js`, `scenes/levelScene.js`, `tooling/{headless,smoke}.mjs`.
 - **R3 — `DemandModel` (`waves/demand.js`)** — `rateAt(t)` as a continuous signal
   (base + diurnal + weekday/weekend + seasonality + `growth^t`). `WaveScheduler`
   becomes a thin adapter; a level supplies `waves[]` (old) **or** a `demand{}` spec. → **T7.1**
@@ -453,7 +456,7 @@ the data-driven catalog/levels pattern):
   "free-run" company** mode (run until bankruptcy/quit, scored by peak). Player picks
   per mission. Shapes R6 (`mode: scenario|freerun`, milestone-or-peak `evaluate`).
 
-**Order:** R2 → R1 → (R3, R4, R5 in parallel) → R6; T7.6 realism (latency SLOs,
+**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → **(R3, R4, R5 in parallel — next)** → R6; T7.6 realism (latency SLOs,
 scaling-lag/warm-up in `LoadModel`, blast radius via the deck, RPO/RTO) rides on the
 stable seams. **Single best first step: R2.** Each step lands runnable + smoke-checked,
 and steps 3–6 each ship ≥1 headless balancing assertion.
