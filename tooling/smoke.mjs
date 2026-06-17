@@ -537,6 +537,52 @@ const readWin = await page.evaluate(async () => {
   return { replicaOk };
 });
 
+// Phase 6 Resilient (T6.4 decouple_drown): a direct route is blocked; routing
+// through an SQS queue wins.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "decouple_drown" }));
+await page.waitForTimeout(300);
+const decoupleWin = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.place(S.rds, gc + 2, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  const noQueueBlocked = !s._checkWinRequires().ok;
+  // Insert an SQS queue between the gate and compute.
+  s.grid.removeEdge(gc, gr, gc + 1, gr);
+  s.grid.place(S.sqs, gc + 1, gr - 1);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr - 1), "vpc");
+  s.grid.addEdge(K(gc + 1, gr - 1), K(gc + 1, gr), "vpc");
+  const sqsOk = s._checkWinRequires().ok;
+  return { noQueueBlocked, sqsOk };
+});
+
+// Phase 6 Resilient (T6.5 fan_out): an SNS topic wired to ONE sink fails the
+// fan-out; wired to BOTH seeded sinks it wins.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "fan_out" }));
+await page.waitForTimeout(300);
+const fanOutWin = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  // Seeded sinks: s3 (13,3), dynamodb (13,7). Build gate -> ec2 -> sns.
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.place(S.sns, gc + 2, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  // Fan to only ONE subscriber first.
+  s.grid.addEdge(K(gc + 2, gr), K(13, 3), "vpc");
+  const oneSinkBlocked = !s._checkWinRequires().ok;
+  // Add the second subscriber.
+  s.grid.addEdge(K(gc + 2, gr), K(13, 7), "vpc");
+  const twoSinksOk = s._checkWinRequires().ok;
+  return { oneSinkBlocked, twoSinksOk };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -561,6 +607,8 @@ console.log("transitive5b:", JSON.stringify(transitive5b));
 console.log("secureWin:", JSON.stringify(secureWin));
 console.log("cacheWin:", JSON.stringify(cacheWin));
 console.log("readWin:", JSON.stringify(readWin));
+console.log("decoupleWin:", JSON.stringify(decoupleWin));
+console.log("fanOutWin:", JSON.stringify(fanOutWin));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -595,10 +643,15 @@ if (catalog3b.groupCount !== 6)        problems.push("PALETTE_GROUPS should have
 if (catalog3b.sqsBuffers !== 0.5)      problems.push("SQS should buffer spikes (attackMitigation 0.5)");
 if (!catalog3b.snsExists)              problems.push("SNS service missing");
 if (!catalog3b.msgGroup)               problems.push("PALETTE_GROUPS should include the integration/Msg group");
-if (levels3c.levelCount !== 12)     problems.push("LEVEL_ORDER should have 12 levels (incl. Phase 6 Secure + High-Perf sprints)");
+if (levels3c.levelCount !== 14)     problems.push("LEVEL_ORDER should have 14 levels (incl. Phase 6 Secure + High-Perf + Resilient sprints)");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.lastIsReadHeavy)      problems.push("read_heavy should be the last level");
+if (!levels3c.lastIsFanOut)         problems.push("fan_out should be the last level");
+if (!levels3c.readHeavyNextDecouple) problems.push("read_heavy.next should chain to decouple_drown");
+if (!levels3c.decoupleNeedsSqs)     problems.push("decouple_drown should require an SQS queue");
+if (!levels3c.fanOutNeedsSns)       problems.push("fan_out should require an SNS topic");
+if (levels3c.fanOutMinSinks !== 2)  problems.push("fan_out fanOut.minSinks should be 2");
+if (!levels3c.fanOutSeedsTwoSinks)  problems.push("fan_out should seed at least 2 subscriber sinks");
 if (!levels3c.singleWriterNext)     problems.push("single_writer.next should chain to mesh_bridge");
 if (!levels3c.meshNeedsTgw)         problems.push("mesh_bridge winRequires should demand a TGW edge");
 if (!levels3c.privateNeedsPlink)    problems.push("private_lines should require a PrivateLink edge");
@@ -668,6 +721,10 @@ if (!secureWin.plinkOk)             problems.push("private_lines: a PrivateLink 
 if (!cacheWin.noCacheBlocked)       problems.push("cache_rules: a direct DB route (no cache) should NOT win");
 if (!cacheWin.cacheOk)              problems.push("cache_rules: a route through a cache layer should win");
 if (!readWin.replicaOk)             problems.push("read_heavy: a Read Replica route (with seeded primary) should win");
+if (!decoupleWin.noQueueBlocked)    problems.push("decouple_drown: a direct route (no SQS) should NOT win");
+if (!decoupleWin.sqsOk)             problems.push("decouple_drown: a route through SQS should win");
+if (!fanOutWin.oneSinkBlocked)      problems.push("fan_out: SNS wired to one sink should NOT satisfy fan-out");
+if (!fanOutWin.twoSinksOk)          problems.push("fan_out: SNS wired to two sinks should win");
 
 console.log("phase4:", JSON.stringify(phase4));
 
