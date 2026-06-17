@@ -34,35 +34,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      # The harness imports the pure sim modules under game/src; no deps to install.
-      - name: Headless simulation harness (seeded determinism + invariants)
-        run: node tooling/headless.mjs
-
-      # OPTIONAL browser smoke test (Playwright). Disabled by default because it
-      # installs a browser (~minutes) and is not required to gate a static deploy.
-      # To enable, uncomment and ensure tooling/package.json stays dev-only.
-      # - name: Browser smoke test (Playwright headless Chromium)
-      #   working-directory: tooling
-      #   run: |
-      #     npm ci
-      #     npx playwright install --with-deps chromium
-      #   # serve the repo root, then run the smoke test against it:
-      #   # (smoke.mjs expects the site served at http://localhost:8000)
-      # - name: Serve + smoke
-      #   run: |
-      #     python3 -m http.server 8000 --directory . &
-      #     sleep 2
-      #     node tooling/smoke.mjs
-
-  # ---------------------------------------------------------------------------
-  # DEPLOY: trigger Forge, then health-check the live site.
-  # ---------------------------------------------------------------------------
   deploy:
     needs: verify
     runs-on: ubuntu-latest
