@@ -76,9 +76,11 @@ See **[`backlog.md`](backlog.md)** for the full phase history and what's next (m
 | 3 | Difficulty tiers, diagonal/any-distance wiring, broad catalog, gap-mapped boss levels | ✅ done |
 | 4 | Procedural audio, particles/trails, exam tips, sandbox mode | ✅ done |
 | 5 | Typed connections (VPC / Peering / Transit Gateway / PrivateLink) + transitive routing | ✅ done |
-| 6 | Full SAA-C03 curriculum coverage — boss levels for every exam domain | ✅ done |
+| 6 | Full SAA-C03 curriculum coverage — boss levels for every exam domain (19 levels) | ✅ done |
+| 7 | **Living simulation** — longer missions, time-varying demand, a compounding/fluctuating economy, a richer "unforeseen circumstances" incident deck, and a long-form "company" mode | 🔵 planned |
+| 8 | **Grand pivot** — fork into a *visual AWS SDK client*: the canvas topology becomes real AWS resources read live via the SDK (read-only first), with a gated provisioning path | 🟣 vision |
 
-Remaining: enrichment (multi-region DR, secrets tile) + a final perf/QA pass. Full task breakdown in [`backlog.md`](backlog.md).
+**Where this is heading.** Phases 1–6 made a complete SAA-C03 exam-prep game. Phase 7 grows it into a real simulation of operating a living, growing AWS system over time — for distributed-systems designers, not just exam-takers. Phase 8 is the long-term pivot: fork the engine into a visual AWS SDK/API client that reads (and eventually drives) live cloud accounts. The Phase 8 write path is hard-gated on security + a real dependency on the AWS SDK — read-only and dry-run by default. Full task breakdown in [`backlog.md`](backlog.md).
 
 ## Development
 

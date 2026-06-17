@@ -3,12 +3,13 @@
 > **Build your cloud empire. Tame the traffic.**
 > AWS SAA-C03 study guide reborn as a browser game. **Factorio meets RollerCoaster Tycoon.**
 
-**Status:** Phase 4 ✅ **complete.** Pre-Phase-5 fixes ✅ committed (`8718105`): AZ randomization, level win requirements, sandbox reinvestment slider. Phase 5 🔵 queued: typed connections. Stack: zero-dep vanilla.
+**Status:** Phases 1–6 ✅ **complete.** Feature-complete campaign: **19 levels + sandbox**, every SAA-C03 domain ≥3 boss levels; 24 services / 6 palette tabs; typed connections (VPC/Peering/TGW/PrivateLink) with transitive routing; realistic cross-AZ economy; incidents (AZ failure, traffic spike, cost audit, spot interruption, region failure). Stack: zero-dep vanilla. **Next horizons:** **Phase 7** — living simulation (longer missions, dynamic/growing economy); **Phase 8** — the grand pivot: fork into a visual AWS SDK client.
 
 ## Progress log
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 - **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
+- **2026-06-17 — UI polish + roadmap Epochs.** Fixed the palette tab overflow (bar width tracked the active group's service row, so narrow groups let the 6-tab row spill — SECURITY bled off; now the content area is `max(serviceRow, tabRow)` with fixed-width tabs, stable bar). Collapsed the title's 19-mission grid into a styled **Campaign dropdown** (two readable columns, modal). Perf: cached the building body gradient + color-mix in the render hot path. Added two roadmap Epochs to this backlog: **Phase 7** (living simulation — time-varying demand, compounding economy, richer incident deck, long-form "company" mode) and **Phase 8** (grand pivot — fork into a visual AWS SDK client, read-only first, hard security/dependency gates). → `palette.js`, `titleScene.js`, `sprites.js`, READMEs, `backlog.md`. smoke: 0/0, 60fps.
 - **2026-06-17 — T6.3 Secret Keeper (Secrets Manager).** 19th level: broker DB credentials through a new `secrets_manager` tile (Security group) instead of hard-coding them — `pathContainsAll:["secrets_manager"]`. Inserted before the DR finale; Secure domain now has 4 boss levels. → `catalog.js`, `levels.js`, `smoke.mjs`. smoke: 19 levels, 0/0.
 - **2026-06-17 — Title-screen UI cleanup + T6.6 multi-region DR.** Title: replaced the runaway single-row level strip (17 chips × 128px blew the screen width) with a compact wrapped grid of numbered chips (4–9 auto-columns, number + short name + stars), the hovered mission's full name/subtitle on a reserved line; tightened logo/wordmark spacing. T6.6 "Across the Region" (18th level): new `region_failure` event downs the primary region's AZ bands — Multi-AZ can't save it (single-region); only the global Route 53 gate + a DR-region replica survive. Resilient domain now has 4 boss levels. → `titleScene.js`, `waves/events.js`, `levelScene.js`, `levels.js`, `smoke.mjs`. smoke: 18 levels, 0 errors, 0 problems.
 - **2026-06-17 — Phase 6 Sprint 6d shipped (Cost domain).** Two cost levels with new mechanics: "Cold Storage" (archive to a cheap **S3 Glacier** class under a tight budget — `sinkIs:["s3_glacier"]`; new storage tile, low cost + high retrieval latency) and "Right Price Compute" (buy the steady base with **Reserved** not On-Demand — `pathContainsAny:["ec2_reserved","ec2_spot"]` + `pathExcludes:["ec2"]`; new `ec2_reserved`/`ec2_spot` tiles + a new `spot_interruption` event that takes Spot tiles offline, so Spot-only builds drop). Campaign now **17 levels**; Cost domain has 5 boss levels. → `catalog.js`, `waves/events.js`, `levelScene.js`, `levels.js`, `smoke.mjs`. smoke: 0 errors, 0 problems.
@@ -372,7 +373,76 @@ T6.10** (edge-type `winRequires`), **T6.7, T6.8** (caching / read replicas) — 
 purchasing) last. Keep one domain per session; each level lands runnable + smoke-checked.
 
 > **End of Phase 6:** every SAA-C03 domain has ≥3 boss levels; the campaign is a
-> playable exam-prep map. ~18 levels + sandbox.
+> playable exam-prep map. 19 levels + sandbox.
+
+### 🔵 PHASE 7 — Living simulation (longer missions, dynamic economy)
+
+**Vision.** Evolve from short 3–6 min exam puzzles into a **full simulation of the
+AWS ecosystem** — missions that model larger, longer-lived systems whose conditions
+change over time, for real-world distributed-systems designers *and* for fun. The
+architecture you build must hold up as demand grows, revenue fluctuates, and the
+unforeseen hits. Today every level is a static wave script with a fixed budget; this
+Epoch makes the world *alive*.
+
+**Pillars & candidate tasks** (data/mechanics, not just levels):
+- **T7.1 Time-varying demand** — replace flat wave rates with continuous demand
+  curves: diurnal cycles, weekday/weekend, seasonality, and a long-run **growth
+  trend** (your user base compounds). Traffic is a signal over time, not 4 steps.
+  → `waves/` (new demand model), `levelScene` spawn loop.
+- **T7.2 Dynamic, compounding economy** — revenue **fluctuates** (price changes,
+  demand dips, SLA penalties/credits) and **growth** compounds: profit reinvests
+  into budget; success buys scale; under-provisioning loses customers (revenue
+  decays). Capacity planning becomes the core loop. → `economy/`.
+- **T7.3 Unforeseen-circumstances deck** — expand incidents into a richer, partly
+  random event deck beyond AZ/region/spot/audit: viral spike, upstream dependency
+  outage, security incident, data-loss/backup-restore test (RPO/RTO scored), noisy-
+  neighbor, cert expiry, price hike. Telegraphed, weighted, escalating. → `waves/events.js`.
+- **T7.4 Long-form "company" mode** — a persistent, long-running scenario (20–60+ min
+  or save-and-resume) with milestones (users served, uptime SLOs, margin targets)
+  instead of a single goalRequests number. Build a system that *survives and grows*.
+  → new mode in `levels.js` + persistence in `save/`.
+- **T7.5 Balancing + telemetry** — surface the live signals (demand curve, margin,
+  SLO burn, headroom) so the player can reason like an operator; tune curves headlessly.
+- **T7.6 Realism deepening** — model what real designers weigh: latency SLOs, blast
+  radius, scaling lag (warm-up), tech-debt/right-sizing drift, reserved-vs-on-demand
+  commitment risk over the long run.
+
+> **End of Phase 7:** levels feel like operating a real, growing AWS system over time
+> — demand breathes, money compounds, and the unexpected tests the architecture.
+
+### 🟣 PHASE 8 — Grand pivot: fork into a visual AWS SDK client
+
+**Vision (the larger goal).** Fork this project into a **visual AWS SDK / API client**:
+the same canvas topology model, but the tiles are *real AWS resources* and wires are
+*real relationships*. Read live account state and render it as a navigable map; later,
+provision/configure through the SDK. The game engine becomes the visualization +
+interaction layer for an actual cloud control surface.
+
+**Why it's feasible from here:** the catalog is already a data-driven service model,
+the grid is already a typed resource+relationship graph, and routing/economy already
+mirror AWS semantics. The bridge is a mapping layer + the SDK.
+
+**Direction & gated tasks** (each a deliberate step; safety-gated):
+- **T8.0 Fork** — split into a separate repo/product; keep the game as the teaching
+  artifact, the client as the pro tool. Record the shared engine boundary.
+- **T8.1 Read-only discovery (spike)** — integrate **aws-sdk-js v3** (or a thin
+  backend) to `describe/list` real resources (VPC, subnets, EC2/ASG, RDS, S3, ELB…)
+  and render them on the canvas via the resource→tile mapping. **Read-only.**
+- **T8.2 Auth** — AWS SSO / STS, least-privilege **read-only** role; never store
+  long-lived secrets; explicit account/region selection.
+- **T8.3 Resource→tile mapping layer** — translate live AWS objects into the existing
+  building/edge model (and back); show real cost (Cost Explorer / pricing) in the bill.
+- **T8.4 (Gated) write path** — provision/modify via SDK with **dry-run by default**,
+  explicit per-action confirmation, change preview/diff, and sandbox-account guards.
+- **T8.5 De-game the UI** — pro-mode chrome for operators while keeping the legible,
+  spatial topology view.
+
+> ⚠️ **Hard gates for Phase 8.** This breaks two founding constraints and needs
+> explicit approval: (1) **dependencies** — a real AWS SDK (no longer zero-dep), and
+> likely a backend for credentials; (2) **security** — it touches live infrastructure
+> and real money, so it must be **read-only / dry-run by default**, least-privilege,
+> sandbox-first, with confirmation on every mutation. Park the write path until the
+> read-only client is proven and the auth/safety model is signed off.
 
 ---
 

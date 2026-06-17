@@ -145,9 +145,17 @@ Chain levels with `next`, list them in `LEVEL_ORDER`, and add an `intro` +
 
 ## Scope & roadmap
 
-The campaign is feature-complete across all four SAA-C03 domains (Phases 1–6).
-Remaining work is enrichment — multi-region DR, a secrets/KMS tile, and a final
-perf/QA + cross-browser pass. Full phase history and the level roadmap live in
-[`../backlog.md`](../backlog.md). A dev-only Playwright smoke test (loads the
-game, asserts no console/page errors, checks level/win-rule invariants) is in
-[`../tooling/`](../tooling/) and is **not** shipped with the game.
+The campaign is feature-complete across all four SAA-C03 domains (Phases 1–6, 19
+levels). Two horizons are planned in [`../backlog.md`](../backlog.md):
+
+- **Phase 7 — living simulation:** longer missions with time-varying demand, a
+  compounding/fluctuating economy, a richer "unforeseen circumstances" incident
+  deck, and a long-form "company" mode — operating a real, growing AWS system over
+  time, not just short exam puzzles.
+- **Phase 8 — grand pivot:** fork the engine into a *visual AWS SDK client* — the
+  canvas topology becomes real AWS resources read live via the SDK (read-only
+  first; the provisioning path is hard-gated on security + a real SDK dependency).
+
+A dev-only Playwright smoke test (loads the game, asserts no console/page errors,
+checks level/win-rule invariants) is in [`../tooling/`](../tooling/) and is **not**
+shipped with the game.
