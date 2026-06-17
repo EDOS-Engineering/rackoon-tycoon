@@ -245,6 +245,102 @@ connection *types*. Resolved as follows, to avoid redundancy and unmodelled node
 > **End of Phase 5:** wires carry a real AWS networking construct — typed, priced,
 > coloured, and topology-checked. Transitive-routing sim is the Phase 5b stretch.
 
+### 🟣 PHASE 6 — Full SAA-C03 curriculum coverage (level roadmap)
+
+Goal: the campaign should touch **every SAA-C03 exam domain**, each boss level a
+concrete decision the exam tests. Today's 7 levels skew to networking/DB; this
+phase fills the gaps. Build per sub-sprint (one domain per session), each level a
+data-only `levels.js` addition where the catalog already supports it, plus the few
+new services/mechanics flagged below.
+
+#### Domain coverage matrix (current → target)
+SAA-C03 weights: **Secure 30% · Resilient 26% · High-Performing 24% · Cost 20%.**
+
+| Domain | Have | Gap to fill |
+|--------|------|-------------|
+| **Secure** | `raccoons_gate` (WAF/Shield/CloudFront) | private connectivity (PrivateLink/endpoints, no public exposure), encryption at rest + S3 OAC, secrets/identity |
+| **Resilient** | `zone_down` (Multi-AZ) | decoupling (SQS/SNS), multi-region DR + RPO/RTO, backups/auto-recovery |
+| **High-Performing** | `rush_hour` (scale-out), `replay_or_gone` (streaming) | caching tiers (CloudFront/ElastiCache/DAX), read scaling (read replicas), serverless/event-driven |
+| **Cost** | `leaky_pipe` (NAT vs endpoint), `single_writer` (DB right-sizing) | many-VPC connectivity cost (TGW vs Peering), storage tiering (S3/Glacier lifecycle), compute purchasing (Spot/Reserved/Savings) |
+
+#### Proposed campaign (existing 7 + 11 new = 18; unlock chain in order)
+Each new level: **concept → exam lesson → win mechanic → new deps.** "win mechanic"
+reuses the `winRequires` system (`sinkIs` / `pathContainsAll` / `pathContainsAny`,
+extended where noted); events reuse `EventDirector`.
+
+**Sprint 6a — Secure (after `raccoons_gate`)**
+- **T6.1 "Private Lines"** — reach a private DB/S3 with zero public exposure.
+  *Lesson:* PrivateLink / Gateway endpoints vs NAT/public. *Win:* sink reached via a
+  `privatelink` edge **or** `vpc_endpoint`; **fail** if the path uses `nat_gateway`
+  or a public hop. *Deps:* none (Phase 5 typed edges + VPCE already exist) — needs a
+  `winRequires` check on **edge type** (small extension to `_checkWinRequires`).
+- **T6.2 "Locked Buckets"** — serve private S3 only through CloudFront (OAC) + encryption.
+  *Lesson:* S3 not public, OAC, encryption at rest. *Win:* S3 sink reached only via
+  `cloudfront`; direct public S3 path fails. *Deps:* an "encrypted / OAC" flag on S3
+  (data-only) + optional `kms` tile.
+- **T6.3 "Secret Keeper"** *(optional / stretch)* — no hard-coded creds; pull from a
+  secrets store. *Deps:* **NEW** `secrets_manager` (or `kms`) tile. Cut if scope tight.
+
+**Sprint 6b — Resilient**
+- **T6.4 "Decouple or Drown"** — absorb a traffic spike with a queue between tiers.
+  *Lesson:* SQS buffering, async, retries, no synchronous coupling. *Win:* `sqs` sits
+  on the path between the front tier and compute; survives a spike that a direct wire
+  can't. *Deps:* **NEW** `sqs` service (role: buffer/edge that smooths load).
+- **T6.5 "Fan Out"** — one event, many consumers. *Lesson:* SNS/EventBridge pub/sub.
+  *Win:* `sns` fans a stream to ≥2 sinks. *Deps:* **NEW** `sns` (and/or `eventbridge`).
+- **T6.6 "Across the Region"** — survive a whole-region loss. *Lesson:* DR strategies
+  (backup/restore → pilot light → warm standby → multi-site) + Route 53 failover +
+  cross-region replica. *Win:* a second-region cluster + Route 53 health-failover
+  keeps serving through a `region_failure` event. *Deps:* **NEW** `region_failure`
+  event kind + a board notion of a second region (or reuse AZ bands as "regions").
+
+**Sprint 6c — High-Performing**
+- **T6.7 "Cache Rules"** — cut DB load + latency with a cache. *Lesson:* CloudFront /
+  ElastiCache / DAX layering. *Win:* `cache` (or `cloudfront`) in front of the DB;
+  meet a tighter latency/throughput SLA. *Deps:* none (cache/cloudfront exist);
+  optional **NEW** `dax` for the DynamoDB variant.
+- **T6.8 "Read Heavy"** — scale a read-mostly workload. *Lesson:* RDS Read Replica for
+  read scaling vs Multi-AZ for HA. *Win:* a primary + ≥1 `rds_replica` serving reads.
+  *Deps:* none (replica + dependency model already shipped) — wants a read/write split
+  in the load model so replicas measurably help.
+- **T6.9 "Serverless Spike"** — spiky, event-driven, pay-per-use. *Lesson:* Lambda +
+  API Gateway + DynamoDB on-demand. *Win:* `lambda` path to a DynamoDB sink, no EC2.
+  *Deps:* optional **NEW** `api_gateway` front.
+
+**Sprint 6d — Cost**
+- **T6.10 "Mesh vs Bridge"** *(revives the deferred T3.2)* — connect many VPCs cheaply.
+  *Lesson:* Transit Gateway (transitive hub) vs N² VPC Peering. *Win:* use `tgw` to
+  link ≥3 network tiles (vs an explosion of `peering` edges). *Deps:* none (Phase 5
+  typed edges) — needs `winRequires` on **edge type/count** (same extension as T6.1).
+- **T6.11 "Cold Storage"** — tier aging data to cut spend. *Lesson:* S3 lifecycle →
+  IA → Glacier → Deep Archive; retrieval tradeoffs. *Win:* route archival data to a
+  low-cost storage class under budget. *Deps:* **NEW** S3 storage-class / lifecycle
+  mechanic (data-only cost tiers on the S3 tile).
+- **T6.12 "Right Price Compute"** — match purchasing to the workload shape. *Lesson:*
+  Spot (interruptible/spiky) vs Reserved/Savings (steady) vs On-Demand. *Win:* pick
+  the cheap purchasing mode that survives the wave profile. *Deps:* **NEW** purchasing
+  -mode modifier on compute tiles (economy mechanic; a Spot tile can be reclaimed by a
+  `spot_interruption` event).
+
+#### Catalog / mechanic additions this phase needs (roadmap)
+- **Services:** `sqs`, `sns` (core decoupling — highest value); then optional
+  `eventbridge`, `api_gateway`, `dax`, `kms`/`secrets_manager`.
+- **Mechanics:** edge-type-aware `winRequires` (unlocks T6.1/T6.10 with no new art);
+  read/write split in the load model (T6.8); S3 storage-class cost tiers (T6.11);
+  compute purchasing modes + `spot_interruption` event (T6.12); `region_failure`
+  event + second-region board concept (T6.6).
+- **Reuse:** PrivateLink, VPCE, TGW/Peering, Multi-AZ, replicas, cache, CloudFront,
+  Kinesis, Aurora tiers — all already in the catalog.
+
+#### Sequencing recommendation
+Start with the cheap, high-coverage wins that need **no new services** — **T6.1,
+T6.10** (edge-type `winRequires`), **T6.7, T6.8** (caching / read replicas) — then add
+**SQS/SNS** for **T6.4/T6.5**, then the heavier mechanics (DR region, storage tiers,
+purchasing) last. Keep one domain per session; each level lands runnable + smoke-checked.
+
+> **End of Phase 6:** every SAA-C03 domain has ≥3 boss levels; the campaign is a
+> playable exam-prep map. ~18 levels + sandbox.
+
 ---
 
 ## 6. Risks & guardrails
