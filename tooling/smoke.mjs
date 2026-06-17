@@ -728,6 +728,27 @@ const drift = await page.evaluate(async () => {
   return { hasField, surcharges: burn1 > burn0 };
 });
 
+// Sim-depth: reserved-capacity purchasing. Plans exist; buying activates a
+// discount that the bill reflects.
+const reservation = await page.evaluate(async () => {
+  const eco = await import("./src/economy/economy.js");
+  const gm = await import("./src/grid/grid.js");
+  const cat = await import("./src/services/catalog.js");
+  const bill = await import("./src/economy/billing.js");
+  const g = new gm.Grid(6, 6);
+  g.place(cat.SERVICES.ec2, 2, 2);
+  const e = new eco.Economy(1000);
+  const bought = e.buyReservation(eco.RESERVATION_PLANS.compute, 0);
+  const full = bill.BillMeter.runningBurn(g);
+  const disc = bill.BillMeter.runningBurn(g, e.roleDiscount());
+  return {
+    plans: !!(eco.RESERVATION_PLANS.compute && eco.RESERVATION_PLANS.database),
+    bought,
+    active: e.hasReservation("compute"),
+    discounts: disc < full,
+  };
+});
+
 // Company Run Report: cashing out a freerun run hands the results scene a
 // company-shaped payload (mode + milestone eval + ops scorecard) so it renders
 // the dedicated report instead of the scenario verdict.
@@ -797,6 +818,7 @@ console.log("regionDR:", JSON.stringify(regionDR));
 console.log("runReport:", JSON.stringify(runReport));
 console.log("simDepth:", JSON.stringify(simDepth));
 console.log("drift:", JSON.stringify(drift));
+console.log("reservation:", JSON.stringify(reservation));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -956,6 +978,9 @@ if (!simDepth.cert)   problems.push("sim-depth: cert_expiry should set an edge d
 if (!simDepth.depOut) problems.push("sim-depth: dependency_outage should disable only the targeted service");
 if (!drift.hasField)   problems.push("sim-depth: Building should carry a drift field");
 if (!drift.surcharges) problems.push("sim-depth: a drifted tile should raise the running burn (right-sizing surcharge)");
+if (!reservation.plans)     problems.push("sim-depth: reservation plans (compute + database) should exist");
+if (!reservation.bought || !reservation.active) problems.push("sim-depth: buying a reservation should activate it");
+if (!reservation.discounts) problems.push("sim-depth: an active reservation should discount the running burn");
 
 console.log("phase4:", JSON.stringify(phase4));
 

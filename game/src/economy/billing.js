@@ -41,6 +41,7 @@ export class BillMeter {
     this.runningSpent = 0; // portion attributable to per-tile running cost
     this.burnRate = 0; // $/sec right now (running + recent transfer)
     this.auditMul = 1; // live cost multiplier from a cost-audit event
+    this.roleDiscount = null; // sim-depth: active reservation discounts (role -> frac)
     this._transferAcc = 0; // transfer $ accrued this second (for burn display)
     this._transferWindow = 0; // rolling 1s window of transfer spend
     this._winAcc = 0;
@@ -62,13 +63,29 @@ export class BillMeter {
   // Each tile's base burn plus a right-sizing DRIFT surcharge (sim-depth): a tile
   // left over-/under-provisioned (b.drift → 1) wastes up to `driftSurcharge` of
   // its base cost on top.
-  static runningBurn(grid) {
+  static runningBurn(grid, roleDiscount = null) {
     let sum = 0;
     for (const b of grid.buildings.values()) {
       const base = (b.service.cost || 0) / BILL.rateDivisor;
-      sum += base * (1 + BILL.driftSurcharge * (b.drift || 0));
+      const drifted = base * (1 + BILL.driftSurcharge * (b.drift || 0));
+      const disc = roleDiscount ? roleDiscount[b.service.role] || 0 : 0;
+      sum += drifted * (1 - disc);
     }
     return sum;
+  }
+
+  // Running-cost $/sec SAVED by the active reservations (gross − net), for the
+  // run report so the player can see whether a commitment paid off.
+  static reservationSavings(grid, roleDiscount) {
+    if (!roleDiscount) return 0;
+    let saved = 0;
+    for (const b of grid.buildings.values()) {
+      const disc = roleDiscount[b.service.role] || 0;
+      if (!disc) continue;
+      const drifted = ((b.service.cost || 0) / BILL.rateDivisor) * (1 + BILL.driftSurcharge * (b.drift || 0));
+      saved += drifted * disc;
+    }
+    return saved;
   }
 
   // Charge for `hops` worth of data transfer (one packet crossing one wire = 1).
@@ -83,7 +100,9 @@ export class BillMeter {
   // Advance the meter one sim step. Returns the dollars billed this step so the
   // caller can subtract from budget. `grid` supplies the running burn.
   tick(dt, grid) {
-    const running = BillMeter.runningBurn(grid) * this.auditMul;
+    // `roleDiscount` (set by the sim from active reservations) shaves matching
+    // tiles' running cost while a reservation is live.
+    const running = BillMeter.runningBurn(grid, this.roleDiscount) * this.auditMul;
     const runSpend = running * dt;
     this.runningSpent += runSpend;
     this.totalSpent += runSpend;

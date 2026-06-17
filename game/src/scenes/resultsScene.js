@@ -260,7 +260,7 @@ export class ResultsScene extends Scene {
     const headH = 188; // rocky + verdict + score + stars
     const msH = 28 + ms.items.length * 22;
     const opsH = 70;
-    const bizH = 64;
+    const bizH = 64 + ((ops.reservationSpend || 0) > 0 ? 16 : 0); // +1 row if reserved
     const panH = headH + msH + opsH + bizH + examH + 84;
     const px = cx - panW / 2;
     const py = Math.max(8, H / 2 - panH / 2);
@@ -347,8 +347,19 @@ export class ResultsScene extends Scene {
       ["Requests served", String(this.r.success || 0), PALETTE.text],
       ["Gross revenue", "$" + Math.round(this.r.revenue || 0), PALETTE.good],
       ["AWS bill (run + transfer)", "$" + Math.round(this.bill.total), PALETTE.warn],
-      ["Budget remaining", "$" + Math.round(this.r.budget || 0), PALETTE.accent],
     ];
+    // Reserved capacity (only if the player committed to one) — did it pay off?
+    const rSpend = Math.round(ops.reservationSpend || 0);
+    if (rSpend > 0) {
+      const rSaved = Math.round(ops.reservationSaved || 0);
+      const net = rSaved - rSpend;
+      rows.push([
+        "Reservations (saved − upfront)",
+        "$" + rSaved + " − $" + rSpend + " = " + (net >= 0 ? "+$" : "−$") + Math.abs(net),
+        net >= 0 ? PALETTE.good : PALETTE.bad,
+      ]);
+    }
+    rows.push(["Budget remaining", "$" + Math.round(this.r.budget || 0), PALETTE.accent]);
     ctx.font = FONT.uiSmall;
     for (const [label, val, color] of rows) {
       ctx.textAlign = "left";
