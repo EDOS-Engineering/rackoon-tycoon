@@ -175,11 +175,18 @@ const levels3c = await page.evaluate(async () => {
   const dd = m.LEVELS.decouple_drown;
   const fo = m.LEVELS.fan_out;
   const ss = m.LEVELS.serverless_spike;
+  const cs = m.LEVELS.cold_storage;
+  const rp = m.LEVELS.right_price;
   return {
     levelCount: m.LEVEL_ORDER.length,
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
-    lastIsServerless: m.LEVEL_ORDER.at(-1) === "serverless_spike",
+    lastIsRightPrice: m.LEVEL_ORDER.at(-1) === "right_price",
+    serverlessNextCold: ss?.next === "cold_storage",
+    coldNeedsGlacier: (cs?.winRequires?.sinkIs || []).includes("s3_glacier"),
+    rightNeedsCheapCompute: (rp?.winRequires?.pathContainsAny || []).some((id) => ["ec2_reserved", "ec2_spot"].includes(id)),
+    rightExcludesOnDemand: (rp?.winRequires?.pathExcludes || []).includes("ec2"),
+    rightHasSpotEvent: (rp?.events || []).some((e) => e.kind === "spot_interruption"),
     fanOutNextServerless: fo?.next === "serverless_spike",
     serverlessNeedsLambda: (ss?.winRequires?.pathContainsAll || []).includes("lambda"),
     serverlessExcludesEc2: (ss?.winRequires?.pathExcludes || []).includes("ec2"),
@@ -587,6 +594,70 @@ const fanOutWin = await page.evaluate(async () => {
   return { oneSinkBlocked, twoSinksOk };
 });
 
+// Phase 6d Cost: new cost-optimized service variants + spot-interruption event.
+const cost6d = await page.evaluate(async () => {
+  const cat = await import("./src/services/catalog.js");
+  const ev = await import("./src/waves/events.js");
+  const S = cat.SERVICES;
+  return {
+    glacierCheaper: !!S.s3_glacier && S.s3_glacier.cost < S.s3.cost,
+    glacierStorage: S.s3_glacier?.role === "storage",
+    reservedCheaper: S.ec2_reserved?.cost < S.ec2?.cost,
+    spotCheaper: S.ec2_spot?.cost < S.ec2_reserved?.cost,
+    spotInterruptible: S.ec2_spot?.spotInterruptible === true,
+    spotEventKind: ev.EVENT_KIND.SPOT_INTERRUPTION === "spot_interruption",
+    serviceCount: cat.PALETTE_ORDER.length, // 23
+  };
+});
+
+// T6.11 cold_storage: a Standard-S3 sink is blocked; Glacier wins.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "cold_storage" }));
+await page.waitForTimeout(300);
+const coldWin = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.place(S.s3, gc + 2, gr); // Standard S3
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  const standardBlocked = !s._checkWinRequires().ok;
+  // Swap the sink to Glacier.
+  s.grid.remove(gc + 2, gr);
+  s.grid.place(S.s3_glacier, gc + 2, gr);
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  const glacierOk = s._checkWinRequires().ok;
+  return { standardBlocked, glacierOk };
+});
+
+// T6.12 right_price: On-Demand EC2 is blocked; Reserved wins. And a spot event
+// takes a Spot tile offline.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "right_price" }));
+await page.waitForTimeout(300);
+const rightWin = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  // Seeded RDS at (12,4). On-Demand path first.
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(12, 4), "vpc");
+  const onDemandBlocked = !s._checkWinRequires().ok;
+  // Replace with Reserved compute.
+  s.grid.remove(gc + 1, gr);
+  s.grid.place(S.ec2_reserved, gc + 1, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(12, 4), "vpc");
+  const reservedOk = s._checkWinRequires().ok;
+  // A Spot tile goes offline during a spot-interruption event.
+  s.grid.place(S.ec2_spot, gc + 1, gr + 2);
+  s.events.events.push({ kind: "spot_interruption", state: "active", at: 0, duration: 9999, warn: 0 });
+  const spotOfflineDuringEvent = s._isKeyDisabled(K(gc + 1, gr + 2));
+  return { onDemandBlocked, reservedOk, spotOfflineDuringEvent };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -613,6 +684,9 @@ console.log("cacheWin:", JSON.stringify(cacheWin));
 console.log("readWin:", JSON.stringify(readWin));
 console.log("decoupleWin:", JSON.stringify(decoupleWin));
 console.log("fanOutWin:", JSON.stringify(fanOutWin));
+console.log("cost6d:", JSON.stringify(cost6d));
+console.log("coldWin:", JSON.stringify(coldWin));
+console.log("rightWin:", JSON.stringify(rightWin));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -647,10 +721,15 @@ if (catalog3b.groupCount !== 6)        problems.push("PALETTE_GROUPS should have
 if (catalog3b.sqsBuffers !== 0.5)      problems.push("SQS should buffer spikes (attackMitigation 0.5)");
 if (!catalog3b.snsExists)              problems.push("SNS service missing");
 if (!catalog3b.msgGroup)               problems.push("PALETTE_GROUPS should include the integration/Msg group");
-if (levels3c.levelCount !== 15)     problems.push("LEVEL_ORDER should have 15 levels");
+if (levels3c.levelCount !== 17)     problems.push("LEVEL_ORDER should have 17 levels");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.lastIsServerless)     problems.push("serverless_spike should be the last level");
+if (!levels3c.lastIsRightPrice)     problems.push("right_price should be the last level");
+if (!levels3c.serverlessNextCold)   problems.push("serverless_spike.next should chain to cold_storage");
+if (!levels3c.coldNeedsGlacier)     problems.push("cold_storage should require the s3_glacier sink");
+if (!levels3c.rightNeedsCheapCompute) problems.push("right_price should require Reserved/Spot compute");
+if (!levels3c.rightExcludesOnDemand) problems.push("right_price should exclude on-demand ec2");
+if (!levels3c.rightHasSpotEvent)    problems.push("right_price should schedule a spot_interruption event");
 if (!levels3c.fanOutNextServerless) problems.push("fan_out.next should chain to serverless_spike");
 if (!levels3c.serverlessNeedsLambda) problems.push("serverless_spike should require Lambda in the route");
 if (!levels3c.serverlessExcludesEc2) problems.push("serverless_spike should exclude EC2 from the route");
@@ -732,6 +811,18 @@ if (!decoupleWin.noQueueBlocked)    problems.push("decouple_drown: a direct rout
 if (!decoupleWin.sqsOk)             problems.push("decouple_drown: a route through SQS should win");
 if (!fanOutWin.oneSinkBlocked)      problems.push("fan_out: SNS wired to one sink should NOT satisfy fan-out");
 if (!fanOutWin.twoSinksOk)          problems.push("fan_out: SNS wired to two sinks should win");
+// Phase 6d Cost.
+if (!cost6d.glacierCheaper)         problems.push("s3_glacier should be cheaper than s3");
+if (!cost6d.glacierStorage)         problems.push("s3_glacier should be a storage-role sink");
+if (!cost6d.reservedCheaper)        problems.push("ec2_reserved should be cheaper than on-demand ec2");
+if (!cost6d.spotCheaper)            problems.push("ec2_spot should be cheaper than ec2_reserved");
+if (!cost6d.spotInterruptible)      problems.push("ec2_spot should be spotInterruptible");
+if (!cost6d.spotEventKind)          problems.push("EVENT_KIND.SPOT_INTERRUPTION should exist");
+if (!coldWin.standardBlocked)       problems.push("cold_storage: a Standard-S3 sink should NOT win");
+if (!coldWin.glacierOk)             problems.push("cold_storage: a Glacier sink should win");
+if (!rightWin.onDemandBlocked)      problems.push("right_price: an On-Demand EC2 path should NOT win");
+if (!rightWin.reservedOk)           problems.push("right_price: a Reserved-compute path should win");
+if (!rightWin.spotOfflineDuringEvent) problems.push("right_price: a Spot tile should go offline during a spot-interruption event");
 
 console.log("phase4:", JSON.stringify(phase4));
 

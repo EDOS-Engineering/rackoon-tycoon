@@ -26,6 +26,7 @@ export const EVENT_KIND = {
   AZ_FAILURE: "az_failure",
   TRAFFIC_SPIKE: "traffic_spike",
   COST_AUDIT: "cost_audit",
+  SPOT_INTERRUPTION: "spot_interruption",
 };
 
 // How many AZ bands the grid is divided into.
@@ -117,6 +118,11 @@ export class EventDirector {
     return m;
   }
 
+  // True while a spot-interruption event is active — Spot compute tiles go offline.
+  spotInterrupted() {
+    return this._active(EVENT_KIND.SPOT_INTERRUPTION).length > 0;
+  }
+
   billMultiplier() {
     let m = 1;
     for (const e of this._active(EVENT_KIND.COST_AUDIT)) m *= e.magnitude || 1.5;
@@ -174,6 +180,8 @@ function warningText(e, cols) {
       return "⚠ Traffic spike inbound — a surge of guests is on the way";
     case EVENT_KIND.COST_AUDIT:
       return "⚠ Cost audit scheduled — your bill is about to be scrutinised";
+    case EVENT_KIND.SPOT_INTERRUPTION:
+      return "⚠ Spot capacity reclamation inbound — Spot instances will be interrupted";
     default:
       return "⚠ Incident inbound";
   }
@@ -187,6 +195,8 @@ function activeText(e, cols) {
       return "🔥 Traffic spike! Requests pouring in";
     case EVENT_KIND.COST_AUDIT:
       return "💸 Cost audit active — running bill inflated";
+    case EVENT_KIND.SPOT_INTERRUPTION:
+      return "🎰 Spot interruption — Spot instances are OFFLINE";
     default:
       return "Incident active";
   }

@@ -386,6 +386,59 @@ export const SERVICES = {
       "Aurora Limitless uses distributed transactions across shard nodes. Choose it only when write throughput genuinely exceeds a single writer's maximum ACU ceiling. Cost is significantly higher than SV2.",
   },
 
+  // ---- Cost-optimized variants (Phase 6d) ----
+  s3_glacier: {
+    id: "s3_glacier",
+    label: "S3 Glacier",
+    short: "Glacier",
+    emoji: "❄️",
+    role: ROLE.STORAGE,
+    color: "#7fb5d6",
+    cost: 8,
+    throughput: 60,
+    latency: 30, // archival retrieval is slow — earns less per request
+    placeable: true,
+    blurb:
+      "S3 Glacier — archival storage class. A fraction of Standard's price for cold, rarely-accessed data. Retrieval is slow (high latency), so it's for archives, not hot reads.",
+    examTip:
+      "S3 classes by cost↓ / retrieval-time↑: Standard → Standard-IA → One Zone-IA → Glacier Instant → Glacier Flexible → Deep Archive. Use S3 Lifecycle rules to transition aging objects automatically. Archive cold data to Glacier; never park it in Standard.",
+  },
+
+  ec2_reserved: {
+    id: "ec2_reserved",
+    label: "EC2 Reserved",
+    short: "Reserved",
+    emoji: "🖥️",
+    role: ROLE.COMPUTE,
+    color: "#2a9d8f",
+    cost: 70,
+    throughput: 30,
+    latency: 6,
+    placeable: true,
+    blurb:
+      "EC2 with a Reserved Instance / Savings Plan — a 1–3 year commitment for ~40–60% off On-Demand. Best for the steady, always-on baseline. Not interruptible.",
+    examTip:
+      "Reserved Instances / Savings Plans: commit to steady usage for a big discount (Savings Plans are more flexible across instance families/regions). Use for predictable baseline load. On-Demand for short/unpredictable bursts; Spot for fault-tolerant, interruptible work.",
+  },
+
+  ec2_spot: {
+    id: "ec2_spot",
+    label: "EC2 Spot",
+    short: "Spot",
+    emoji: "🎰",
+    role: ROLE.COMPUTE,
+    color: "#e76f51",
+    cost: 40,
+    throughput: 30,
+    latency: 6,
+    spotInterruptible: true, // a spot-interruption event takes it offline
+    placeable: true,
+    blurb:
+      "EC2 Spot — spare capacity at up to 90% off, but AWS can reclaim it with two minutes' notice. Cheapest compute; only for fault-tolerant, interruption-safe workloads.",
+    examTip:
+      "Spot = cheapest, interruptible (2-min warning) — great for batch, CI, stateless/fault-tolerant fleets, never for a stateful single instance. Mix Spot + On-Demand/Reserved in an ASG for cost + resilience. Steady baseline → Reserved; spiky → On-Demand/serverless.",
+  },
+
   // ---- Integration / decoupling ----
   sqs: {
     id: "sqs",
@@ -430,8 +483,8 @@ export const SERVICES = {
 // Each group appears as a tab; its `ids` are shown in the service row.
 export const PALETTE_GROUPS = [
   { id: "net",      label: "Net",      ids: ["alb", "cloudfront", "nat_gateway", "vpc_endpoint", "cache"] },
-  { id: "compute",  label: "Compute",  ids: ["ec2", "lambda", "kinesis_streams"] },
-  { id: "data",     label: "Data",     ids: ["kinesis_firehose", "s3"] },
+  { id: "compute",  label: "Compute",  ids: ["ec2", "ec2_reserved", "ec2_spot", "lambda", "kinesis_streams"] },
+  { id: "data",     label: "Data",     ids: ["kinesis_firehose", "s3", "s3_glacier"] },
   { id: "database", label: "DB",       ids: ["rds", "rds_multiaz", "rds_replica", "dynamodb", "aurora_sv2", "aurora_limitless"] },
   { id: "integration", label: "Msg",   ids: ["sqs", "sns"] },
   { id: "security", label: "Security", ids: ["waf", "shield"] },

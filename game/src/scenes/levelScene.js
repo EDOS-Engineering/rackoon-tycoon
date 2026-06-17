@@ -364,13 +364,16 @@ export class LevelScene extends Scene {
 
     // Apply AZ-failure outages to buildings. When the disabled set changes, the
     // route must be recomputed (and in-flight packets on broken paths dropped).
+    const spotDown = this.events.spotInterrupted();
     let changed = false;
     for (const b of this.grid.buildings.values()) {
       // Route 53 (global) and azResilient services (e.g. RDS Multi-AZ with a
-      // synchronous standby) are never disabled by AZ failure events.
-      const off = (b.service.role === ROLE.GATE || b.service.azResilient)
+      // synchronous standby) are never disabled by AZ failure events. Spot tiles
+      // additionally go offline during a spot-interruption event.
+      let off = (b.service.role === ROLE.GATE || b.service.azResilient)
         ? false
         : this.events.isTileDisabled(b.col, b.row);
+      if (b.service.spotInterruptible && spotDown) off = true;
       if (off !== b.disabled) {
         b.disabled = off;
         changed = true;
@@ -392,7 +395,7 @@ export class LevelScene extends Scene {
     for (const e of this.events.events) {
       if ((e.state === "warning" || e.state === "active") && !e._sounded) {
         e._sounded = true;
-        if (e.kind === "az_failure") audio.play("azFail");
+        if (e.kind === "az_failure" || e.kind === "spot_interruption") audio.play("azFail");
         else if (e.kind === "traffic_spike") audio.play("spike");
         else audio.play("alert");
       }
@@ -422,6 +425,7 @@ export class LevelScene extends Scene {
     const [c, r] = Grid.parseKey(key);
     const b = this.grid.getBuilding(c, r);
     if (b && !this._dependencyMet(b)) return true;
+    if (b && b.service.spotInterruptible && this.events.spotInterrupted()) return true;
     if (b && (b.service.role === ROLE.GATE || b.service.azResilient)) return false;
     return this.events.isTileDisabled(c, r);
   }

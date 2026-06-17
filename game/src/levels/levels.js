@@ -561,7 +561,7 @@ export const LEVELS = {
       { id: "dynamodb", col: 12, row: 4 },
     ],
     goalRequests: 70,
-    next: null, // end of the campaign chain (for now)
+    next: "cold_storage",
     waves: [
       { name: "Idle",          duration: 18, rate: 0.4 },
       { name: "Sudden burst",  duration: 18, rate: 2.6 },
@@ -585,6 +585,84 @@ export const LEVELS = {
       "This workload is bursty: long idle stretches punctuated by sudden spikes. An always-on EC2 fleet sized for the peak sits idle (and billing) most of the time — and a fleet sized for the average drops the spikes.\n\nGo serverless. Lambda scales from zero to thousands of concurrent executions instantly and bills only while running. Pair it with DynamoDB on-demand, which scales capacity automatically with no provisioning. No idle servers, no capacity planning.\n\nWire Lambda (Compute tab) in front of DynamoDB. Leave EC2 out.\n\n⚠ WIN CONDITION: a Lambda → DynamoDB path, with no EC2.\n\nRoute 70 to win.",
     examTip:
       "Serverless = Lambda (event-driven, scales to zero, 15-min max, pay-per-ms) + DynamoDB on-demand (auto-scaling, no capacity planning) + API Gateway. Ideal for spiky/unpredictable load. Provisioned Concurrency removes cold starts for latency-sensitive paths. Spiky workload → serverless beats an idle EC2 fleet on cost and scale.",
+  },
+
+  // T6.11 — Domain: Cost. Archive cold data to a cheap storage class instead of
+  // parking it in expensive hot storage.
+  cold_storage: {
+    id: "cold_storage",
+    name: "Cold Storage",
+    subtitle: "Archive the cold data — stop paying hot prices",
+    cols: 16,
+    rows: 9,
+    budget: 1500, // tight — hot storage running cost will strain it
+    spawnRate: 0.95,
+    gates: [{ col: 1, row: 4 }],
+    seed: [],
+    goalRequests: 70,
+    next: "right_price",
+    waves: [
+      { name: "Backup window",  duration: 22, rate: 1.0 },
+      { name: "Archive flow",   duration: 28, rate: 1.5 },
+      { name: "Bulk migration", duration: 28, rate: 1.9 },
+      { name: "Wind-down",      duration: 16, rate: 1.1 },
+    ],
+    events: [
+      { at: 36, kind: "cost_audit", duration: 16, warn: 6, magnitude: 1.8 },
+    ],
+    slaMaxDropRate: 0.34,
+    // Win requires routing the archival data to the Glacier storage class.
+    winRequires: {
+      sinkIs: ["s3_glacier"],
+      requirementHint: "Archive this cold data to S3 Glacier (Data tab) — Standard storage is far too expensive for rarely-accessed data",
+    },
+    intro:
+      "Mountains of rarely-accessed archival data are pouring in — logs, backups, compliance records. Storing them in S3 Standard is burning budget you don't need to spend.\n\nMatch the storage class to the access pattern. S3 Glacier costs a fraction of Standard for cold data; the tradeoff is slow retrieval (you rarely read it). In production, S3 Lifecycle rules transition aging objects automatically.\n\nRoute the archival data to S3 Glacier (Data tab) and keep the bill under the tight budget.\n\n⚠ WIN CONDITION: data is archived to S3 Glacier.\n\nRoute 70 to win.",
+    examTip:
+      "S3 storage classes (cost↓, retrieval-time↑): Standard → Standard-IA → One Zone-IA → Glacier Instant → Glacier Flexible → Deep Archive. S3 Lifecycle policies automate transitions and expirations. S3 Intelligent-Tiering auto-moves objects by access pattern when it's unpredictable. Cold data in Standard is a classic cost-optimization miss.",
+  },
+
+  // T6.12 — Domain: Cost. Match the purchasing model to the workload shape:
+  // Reserved/Savings for the steady base, Spot only for interruption-safe work.
+  right_price: {
+    id: "right_price",
+    name: "Right Price Compute",
+    subtitle: "Steady load — stop paying On-Demand rates",
+    cols: 16,
+    rows: 9,
+    budget: 1800,
+    spawnRate: 1.0,
+    gates: [{ col: 1, row: 4 }],
+    // A database is seeded; the player chooses how to buy the compute in front.
+    seed: [
+      { id: "rds", col: 12, row: 4 },
+    ],
+    goalRequests: 85,
+    next: null, // end of the campaign chain (for now)
+    waves: [
+      { name: "Baseline",     duration: 22, rate: 1.2 },
+      { name: "Steady state", duration: 30, rate: 1.5 },
+      { name: "Sustained",    duration: 30, rate: 1.6 },
+      { name: "Hold",         duration: 18, rate: 1.4 },
+    ],
+    events: [
+      // Spot reclamation: Spot-only builds get interrupted and drop traffic.
+      { at: 40, kind: "spot_interruption", duration: 14, warn: 7 },
+      { at: 78, kind: "cost_audit", duration: 12, warn: 5, magnitude: 1.5 },
+    ],
+    slaMaxDropRate: 0.30,
+    // Win requires cheaper-than-On-Demand compute (Reserved or Spot), not full
+    // On-Demand EC2. The spot-interruption event punishes a Spot-only build, so the
+    // resilient cost-optimal answer is Reserved for the steady base.
+    winRequires: {
+      pathContainsAny: ["ec2_reserved", "ec2_spot"],
+      pathExcludes: ["ec2"],
+      requirementHint: "Steady baseline → buy it cheap with a Reserved Instance (Compute tab), not full-price On-Demand EC2. Spot is cheapest but gets interrupted",
+    },
+    intro:
+      "A steady, predictable baseline runs all day. Paying full On-Demand rates for always-on capacity is the expensive way — and over-relying on Spot will bite you when AWS reclaims it.\n\nMatch purchasing to the workload: a Reserved Instance / Savings Plan commits to the steady base for ~40–60% off On-Demand. Spot is up to 90% off but interruptible — only for fault-tolerant work. A spot-interruption event WILL hit during this shift.\n\nFront the database with Reserved compute (Compute tab). Leave full-price On-Demand EC2 out.\n\n⚠ WIN CONDITION: serve the load with Reserved (or Spot) compute, not On-Demand EC2.\n\nRoute 85 to win.",
+    examTip:
+      "Purchasing options: On-Demand (flexible, priciest — short/unpredictable), Reserved Instances / Savings Plans (commit 1–3 yr for steady baseline, big discount — Savings Plans flex across families/regions), Spot (up to 90% off, interruptible — batch/CI/stateless fault-tolerant). Cost-optimal fleets mix Reserved baseline + Spot/On-Demand for bursts.",
   },
 
   // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
@@ -627,6 +705,8 @@ export const LEVEL_ORDER = [
   "decouple_drown",
   "fan_out",
   "serverless_spike",
+  "cold_storage",
+  "right_price",
 ];
 
 export const FIRST_LEVEL = "first_light";

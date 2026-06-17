@@ -9,6 +9,7 @@
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 - **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
+- **2026-06-17 — Phase 6 Sprint 6d shipped (Cost domain).** Two cost levels with new mechanics: "Cold Storage" (archive to a cheap **S3 Glacier** class under a tight budget — `sinkIs:["s3_glacier"]`; new storage tile, low cost + high retrieval latency) and "Right Price Compute" (buy the steady base with **Reserved** not On-Demand — `pathContainsAny:["ec2_reserved","ec2_spot"]` + `pathExcludes:["ec2"]`; new `ec2_reserved`/`ec2_spot` tiles + a new `spot_interruption` event that takes Spot tiles offline, so Spot-only builds drop). Campaign now **17 levels**; Cost domain has 5 boss levels. → `catalog.js`, `waves/events.js`, `levelScene.js`, `levels.js`, `smoke.mjs`. smoke: 0 errors, 0 problems.
 - **2026-06-17 — Phase 6 core goal met (every domain ≥3 boss levels).** Added "Serverless Spike" (T6.9): bursty workload won by a Lambda→DynamoDB serverless path with no always-on EC2 (`sinkIs:["dynamodb"]` + `pathContainsAll:["lambda"]` + `pathExcludes:["ec2"]`), no new services. Campaign now **15 levels**. Domain coverage: Secure 3, Resilient 3, High-Performing 5, Cost 3. Remaining Phase 6 is enrichment needing new mechanics: 6d Cost (Cold Storage = S3 storage-class tiers; Right Price Compute = purchasing modes + spot-interruption event), T6.6 multi-region DR (region-failure event + second-region board concept), T6.3 Secret Keeper (secrets tile). → `levels.js`, `smoke.mjs`. smoke: 0 errors, 0 problems.
 - **2026-06-17 — Phase 6 Sprint 6b shipped (Resilient domain) + first new services.** Two decoupling levels: "Decouple or Drown" (buffer a spike through an **SQS** queue — `pathContainsAll:["sqs"]`; SQS reuses the spike-absorption field to model buffering) and "Fan Out" (publish to ≥2 subscribers through an **SNS** topic — new `winRequires.fanOut` structural check, since the single-path router can't express one-to-many). New `sqs`/`sns` tiles + a "Msg" palette group (now 6 groups, 20 services). Campaign now 14 levels ending in fan_out; Resilient domain has 3 boss levels (with zone_down). T6.6 multi-region DR deferred (needs a region-failure event + board concept). → `catalog.js`, `levelScene.js`, `levels.js`, `smoke.mjs`. smoke: 0 errors, 0 problems.
 - **2026-06-17 — Phase 6 Sprint 6c shipped (High-Performing domain).** Two more curriculum levels, no new services: "Cache Rules" (front a read-storming DB with ElastiCache/CloudFront — `pathContainsAny:["cache","cloudfront"]`) and "Read Heavy" (scale reads with an RDS Read Replica — `sinkIs:["rds_replica"]`, which requires the seeded primary via the dependency model, teaching Read Replica vs Multi-AZ). Campaign now 12 levels ending in read_heavy. → `levels.js`, `smoke.mjs`. smoke: 0 errors, 0 problems (cache gate + replica route verified behaviourally).
@@ -330,19 +331,21 @@ extended where noted); events reuse `EventDirector`.
   Lambda→DynamoDB path with no always-on fleet. No new services (`api_gateway` front
   left optional). → `levels.js`.
 
-**Sprint 6d — Cost**
+**Sprint 6d — Cost ✅** (cold_storage + right_price; new storage-class + purchasing-mode mechanics)
 - ~~**T6.10 "Mesh vs Bridge"**~~ — ✅ **shipped early as T3.2** (campaign finale; TGW
   hub via `edgeTypeAny: ["tgw"]`). The edge-type `winRequires` extension it needed
   (now T5.3) is also done — so T6.1 "Private Lines" can reuse it for a PrivateLink edge.
-- **T6.11 "Cold Storage"** — tier aging data to cut spend. *Lesson:* S3 lifecycle →
-  IA → Glacier → Deep Archive; retrieval tradeoffs. *Win:* route archival data to a
-  low-cost storage class under budget. *Deps:* **NEW** S3 storage-class / lifecycle
-  mechanic (data-only cost tiers on the S3 tile).
-- **T6.12 "Right Price Compute"** — match purchasing to the workload shape. *Lesson:*
-  Spot (interruptible/spiky) vs Reserved/Savings (steady) vs On-Demand. *Win:* pick
-  the cheap purchasing mode that survives the wave profile. *Deps:* **NEW** purchasing
-  -mode modifier on compute tiles (economy mechanic; a Spot tile can be reclaimed by a
-  `spot_interruption` event).
+- [x] **T6.11 "Cold Storage"** — archive cold data to a cheap storage class. Win:
+  `sinkIs:["s3_glacier"]` under a tight budget. New **`s3_glacier`** tile (STORAGE role,
+  low cost, high retrieval latency → earns less per request). Lifecycle/IA taught via
+  exam tip. → `catalog.js`, `levels.js`.
+- [x] **T6.12 "Right Price Compute"** — match purchasing to the workload shape. Win:
+  `pathContainsAny:["ec2_reserved","ec2_spot"]` + `pathExcludes:["ec2"]`. New
+  **`ec2_reserved`** (cheap steady) + **`ec2_spot`** (cheapest, `spotInterruptible`)
+  tiles and a new **`spot_interruption`** event kind that takes Spot tiles offline
+  (reuses the `disabled` path) — a Spot-only build drops, so the resilient cost-optimal
+  answer is Reserved for the steady base. → `catalog.js`, `waves/events.js`,
+  `levelScene.js`, `levels.js`.
 
 #### Catalog / mechanic additions this phase needs (roadmap)
 - **Services:** `sqs`, `sns` (core decoupling — highest value); then optional
