@@ -403,6 +403,37 @@ const edgeWinReq = await page.evaluate(async () => {
   return { blockedByVpc, okWithTgw };
 });
 
+// Phase 5b: transitive routing. A two-peering chain can't reach a third node;
+// a Transit Gateway hop in the middle (transitive) routes through.
+const transitive5b = await page.evaluate(async () => {
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const gm = await import("./src/grid/grid.js");
+  const pf = await import("./src/grid/pathfind.js");
+  const cn = await import("./src/services/connections.js");
+  const g = new gm.Grid(12, 6);
+  const K = (c, r) => c + "," + r;
+  g.place(S.route53, 0, 0);
+  g.place(S.ec2, 1, 0);
+  g.place(S.alb, 2, 0);
+  g.place(S.rds, 3, 0);
+  // gate —vpc→ ec2 —PEERING→ alb —vpc→ rds. alb is entered over peering, so it
+  // can't be transited onward to rds → no route to the sink.
+  g.addEdge(K(0, 0), K(1, 0), "vpc");
+  g.addEdge(K(1, 0), K(2, 0), "peering");
+  g.addEdge(K(2, 0), K(3, 0), "vpc");
+  const blockedByPeeringChain = !pf.gateHasRoute(g, K(0, 0));
+  // Swap the middle hop to a Transit Gateway (transitive) → route forms.
+  g.removeEdge(1, 0, 2, 0);
+  g.addEdge(K(1, 0), K(2, 0), "tgw");
+  const okViaTgw = pf.gateHasRoute(g, K(0, 0));
+  return {
+    blockedByPeeringChain,
+    okViaTgw,
+    peeringNonTransitive: cn.isTransitive("peering") === false,
+    tgwTransitive: cn.isTransitive("tgw") === true,
+  };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -423,6 +454,7 @@ console.log("wireRules:", JSON.stringify(wireRules));
 console.log("typedConns:", JSON.stringify(typedConns));
 console.log("sceneConn:", JSON.stringify(sceneConn));
 console.log("edgeWinReq:", JSON.stringify(edgeWinReq));
+console.log("transitive5b:", JSON.stringify(transitive5b));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -509,6 +541,10 @@ if (!sceneConn.plinkToSinkOk)       problems.push("scene: PrivateLink to a sink 
 if (sceneConn.recordedType !== "privatelink") problems.push("scene: committed edge should record its connection type");
 if (!edgeWinReq.blockedByVpc)       problems.push("mesh_bridge: all-VPC route should NOT satisfy the TGW win rule");
 if (!edgeWinReq.okWithTgw)          problems.push("mesh_bridge: a TGW hop should satisfy the win rule");
+if (!transitive5b.peeringNonTransitive) problems.push("peering should be non-transitive");
+if (!transitive5b.tgwTransitive)    problems.push("TGW should be transitive");
+if (!transitive5b.blockedByPeeringChain) problems.push("5b: a two-peering chain should NOT route to a third node");
+if (!transitive5b.okViaTgw)         problems.push("5b: a transitive TGW hop should route through");
 
 console.log("phase4:", JSON.stringify(phase4));
 

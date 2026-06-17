@@ -10,15 +10,22 @@
 
 import { Grid } from "./grid.js";
 import { SINK_ROLES } from "../services/catalog.js";
+import { isTransitive } from "../services/connections.js";
 
 // Breadth-first search returning a map of cameFrom for path reconstruction.
 // `goalTest(key, building)` returns true when `key` is an acceptable goal.
 // `isBlocked(key)` (optional) lets the caller exclude tiles from routing — used
 // in Phase 2 so an AZ-failure event disables every tile in the failed zone and
 // requests must reroute around it.
+//
+// Phase 5b — transitive routing: a node reached over a NON-transitive link (VPC
+// Peering / PrivateLink) may be a final destination but cannot be *transited*
+// onward, modelling peering's non-transitivity (A—B—C over two peerings can't
+// reach C). Transitive links (VPC, Transit Gateway hub) route through freely.
 function bfs(grid, startKey, goalTest, isBlocked) {
   const cameFrom = new Map();
   cameFrom.set(startKey, null);
+  const noTransit = new Set(); // nodes entered via a non-transitive link
   const queue = [startKey];
   let head = 0;
 
@@ -29,10 +36,13 @@ function bfs(grid, startKey, goalTest, isBlocked) {
     if (cur !== startKey && b && goalTest(cur, b)) {
       return reconstruct(cameFrom, startKey, cur);
     }
+    // Can't route onward through a node reached over a non-transitive link.
+    if (noTransit.has(cur)) continue;
     for (const nk of grid.neighbors(cur)) {
       if (cameFrom.has(nk)) continue;
       if (isBlocked && nk !== startKey && isBlocked(nk)) continue;
       cameFrom.set(nk, cur);
+      if (!isTransitive(grid.getEdgeType(cur, nk))) noTransit.add(nk);
       queue.push(nk);
     }
   }

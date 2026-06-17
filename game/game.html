@@ -139,12 +139,35 @@
       #nojs when the splash is still visible after a short grace period.
     -->
     <script>
+      // Capture any startup error (module eval failure or boot throw) so the
+      // fallback can show the real cause instead of a misleading "needs a server".
+      window.__bootErr = null;
+      window.addEventListener("error", function (e) {
+        window.__bootErr =
+          (e && (e.message || (e.error && e.error.message))) || String(e);
+      });
+      window.addEventListener("unhandledrejection", function (e) {
+        window.__bootErr =
+          "Promise rejection: " +
+          ((e.reason && (e.reason.message || e.reason)) || "unknown");
+      });
       setTimeout(function () {
         var splash = document.getElementById("splash");
-        if (splash && splash.style.display !== "none") {
-          // Modules likely failed to load; show guidance.
-          document.getElementById("nojs").style.display = "flex";
+        if (!splash || splash.style.display === "none") return; // booted fine
+        var nojs = document.getElementById("nojs");
+        if (window.__bootErr) {
+          // A real startup error fired — show it (usually a stale cached module
+          // after an update; a hard reload fixes that).
+          nojs.innerHTML =
+            '<div><strong>Rackoon Tycoon hit a startup error.</strong><br /><br />' +
+            '<code style="color:#ff9f9f">' +
+            String(window.__bootErr).replace(/</g, "&lt;") +
+            "</code><br /><br />" +
+            "If you just updated, <strong>hard-reload</strong> to clear cached modules " +
+            "(Cmd/Ctrl + Shift + R). Otherwise serve over HTTP: " +
+            "<code>python3 -m http.server 8000</code>.</div>";
         }
+        nojs.style.display = "flex";
       }, 2500);
     </script>
   </body>

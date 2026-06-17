@@ -18,6 +18,13 @@
 // Gateway endpoint already exists as a placeable building, and Direct Connect
 // needs an on-prem/partner node the catalog doesn't model yet — deferred.)
 //
+// `transitive` controls whether a request may route ONWARD through a node it
+// reached over this link (Phase 5b). VPC + Transit Gateway are transitive (a TGW
+// hub forwards between all its attachments); VPC Peering is NOT (peering A↔B and
+// B↔C does not yield A↔C — B won't forward A's traffic), and PrivateLink reaches
+// a single service endpoint, so neither can be transited mid-route. The router
+// enforces this in pathfind.
+//
 // `hopCost` is an ADDITIVE per-hop transfer charge (in base-hop units) the type
 // always carries — its own per-GB processing — since plain intra-AZ traffic is
 // free (0). VPC/Peering add nothing intra-AZ; TGW/PrivateLink carry a standing
@@ -35,6 +42,7 @@ export const CONN = {
     color: "#4cc9f0",
     hopCost: 0,
     crossAzExempt: false,
+    transitive: true,
     blurb:
       "Default same-VPC link. Intra-AZ traffic is free; crossing an AZ band costs 8× per hop. Keep chatty tiers in one AZ; pay for cross-AZ only where you need resilience.",
     examTip:
@@ -47,6 +55,7 @@ export const CONN = {
     color: "#52b788",
     hopCost: 0,
     crossAzExempt: false,
+    transitive: false,
     blurb:
       "1:1 VPC Peering. Non-transitive — peering A↔B and B↔C does NOT give A↔C. No hourly fee; you pay only cross-AZ/region data transfer.",
     examTip:
@@ -59,6 +68,7 @@ export const CONN = {
     color: "#b5179e",
     hopCost: 2,
     crossAzExempt: false,
+    transitive: true,
     blurb:
       "Transit Gateway — hub-and-spoke router with transitive routing across many VPCs. Scales to thousands of attachments; adds per-GB data processing on top of transfer.",
     examTip:
@@ -71,6 +81,7 @@ export const CONN = {
     color: "#4361ee",
     hopCost: 1.3,
     crossAzExempt: true,
+    transitive: false,
     requiresSinkEnd: true,
     blurb:
       "PrivateLink — a private interface endpoint to a single service via an ENI. Traffic never leaves the AWS private network (no public or cross-AZ exposure). Per-hour + per-GB. One end must be the service you expose.",
@@ -84,6 +95,13 @@ export const DEFAULT_CONN = "vpc";
 
 export function getConn(id) {
   return CONN[id] || CONN[DEFAULT_CONN];
+}
+
+// True if a request may route onward through a node entered via this link type.
+// Unknown types default to transitive (a plain VPC link).
+export function isTransitive(typeId) {
+  const t = CONN[typeId];
+  return t ? t.transitive !== false : true;
 }
 
 // Per-type legality for a wire between two services, layered ON TOP of the
