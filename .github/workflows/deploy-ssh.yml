@@ -8,11 +8,11 @@
 # `push: { branches: [main] }` and disable deploy.yml's deploy job.
 #
 # Required GitHub repository secrets:
-#   SSH_HOST          — droplet static IP (<DROPLET_STATIC_IP>) or rackoon.cloud
+#   SSH_HOST          — droplet static IP (164.90.247.182) or rackoon.cloud
 #   SSH_USER          — deploy user, normally `forge`
 #   SSH_KEY           — DEDICATED ed25519 deploy PRIVATE key (not a personal key)
 #   DEPLOY_PATH       — e.g. /home/forge/rackoon.cloud
-#   SSH_KNOWN_HOSTS   — output of `ssh-keyscan <DROPLET_STATIC_IP>` (host-key pin)
+#   SSH_KNOWN_HOSTS   — output of `ssh-keyscan 164.90.247.182` (host-key pin)
 #
 # Never hardcode any of these. Static site: no build step here either.
 

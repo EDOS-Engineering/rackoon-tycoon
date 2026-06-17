@@ -33,15 +33,15 @@
 <div class="wrap">
   <div class="crumb"><a href="index.html">← Deployment Plan</a> · DNS</div>
   <h1>1 · <span>DNS</span> for rackoon.cloud</h1>
-  <p class="tag">Point the apex and <code>www</code> at the droplet's static IP. Placeholders: <code>&lt;DROPLET_STATIC_IP&gt;</code> = the droplet's public IPv4 (Forge server detail page / DigitalOcean console).</p>
+  <p class="tag">Point the apex and <code>www</code> at the droplet's reserved static IP <code>164.90.247.182</code> (DigitalOcean reserved IP; visible on the Forge server detail page / DigitalOcean console).</p>
 
   <h2>Records to create</h2>
   <p>Create these at whatever hosts DNS for <code>rackoon.cloud</code> (registrar or DigitalOcean DNS if you delegate the nameservers there).</p>
   <table>
     <thead><tr><th>Type</th><th>Host / Name</th><th>Value</th><th>TTL</th></tr></thead>
     <tbody>
-      <tr><td><code>A</code></td><td><code>@</code> (apex / <code>rackoon.cloud</code>)</td><td><code>&lt;DROPLET_STATIC_IP&gt;</code></td><td><code>3600</code></td></tr>
-      <tr><td><code>A</code></td><td><code>www</code></td><td><code>&lt;DROPLET_STATIC_IP&gt;</code></td><td><code>3600</code></td></tr>
+      <tr><td><code>A</code></td><td><code>@</code> (apex / <code>rackoon.cloud</code>)</td><td><code>164.90.247.182</code></td><td><code>3600</code></td></tr>
+      <tr><td><code>A</code></td><td><code>www</code></td><td><code>164.90.247.182</code></td><td><code>3600</code></td></tr>
     </tbody>
   </table>
   <p>Two A records pointing at the same IP keeps it simple and lets Forge issue one Let's Encrypt cert covering both <code>rackoon.cloud</code> and <code>www.rackoon.cloud</code>. We redirect <code>www</code> → apex in nginx (see Forge Setup).</p>
@@ -52,7 +52,7 @@
   <h2>www as A vs CNAME</h2>
   <p>Either works for <code>www</code>:</p>
   <ul>
-    <li><b>A record (recommended here)</b> — <code>www → &lt;DROPLET_STATIC_IP&gt;</code>. One IP, both names, simplest.</li>
+    <li><b>A record (recommended here)</b> — <code>www → 164.90.247.182</code>. One IP, both names, simplest.</li>
     <li><b>CNAME alternative</b> — <code>www → rackoon.cloud.</code> (note trailing dot). Valid because <code>www</code> is a subdomain. If the droplet IP ever changes you only update the apex A record.</li>
   </ul>
 
@@ -64,8 +64,8 @@
   <p>If the droplet has a public IPv6 address, add matching <code>AAAA</code> records for <code>@</code> and <code>www</code> pointing at it. Optional — skip if you don't need IPv6.</p>
 
   <h2>Verify propagation</h2>
-  <pre><code>dig +short rackoon.cloud        # expect &lt;DROPLET_STATIC_IP&gt;
-dig +short www.rackoon.cloud    # expect &lt;DROPLET_STATIC_IP&gt; (or the apex name if CNAME)</code></pre>
+  <pre><code>dig +short rackoon.cloud        # expect 164.90.247.182
+dig +short www.rackoon.cloud    # expect 164.90.247.182 (or the apex name if CNAME)</code></pre>
   <p>Wait until both resolve to the droplet IP <b>before</b> requesting the Let's Encrypt certificate in Forge — the HTTP-01 challenge needs the domain to already point at the droplet.</p>
 
   <footer>Next: <a href="forge-setup.html">2 · Forge Setup →</a></footer>

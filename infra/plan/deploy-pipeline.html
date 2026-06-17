@@ -71,11 +71,11 @@
   <table>
     <thead><tr><th>Secret</th><th>Value / how to get it</th></tr></thead>
     <tbody>
-      <tr><td><code>SSH_HOST</code></td><td>Droplet static IP (<code>&lt;DROPLET_STATIC_IP&gt;</code>) or <code>rackoon.cloud</code>.</td></tr>
+      <tr><td><code>SSH_HOST</code></td><td>Droplet static IP (<code>164.90.247.182</code>) or <code>rackoon.cloud</code>.</td></tr>
       <tr><td><code>SSH_USER</code></td><td>The Forge deploy user, normally <code>forge</code>.</td></tr>
       <tr><td><code>SSH_KEY</code></td><td>A <b>dedicated</b> deploy private key (PEM). Generate <code>ssh-keygen -t ed25519 -C "gha-deploy"</code>, add the <b>public</b> half to the droplet (Forge → server → <b>SSH Keys</b>, or <code>~forge/.ssh/authorized_keys</code>); put the <b>private</b> half here. Do <b>not</b> reuse a personal key.</td></tr>
       <tr><td><code>DEPLOY_PATH</code></td><td>Server deploy dir, e.g. <code>/home/forge/rackoon.cloud</code>.</td></tr>
-      <tr><td><code>SSH_KNOWN_HOSTS</code></td><td><em>(recommended)</em> Output of <code>ssh-keyscan &lt;DROPLET_STATIC_IP&gt;</code>, to pin the host key instead of blindly trusting it.</td></tr>
+      <tr><td><code>SSH_KNOWN_HOSTS</code></td><td><em>(recommended)</em> Output of <code>ssh-keyscan 164.90.247.182</code>, to pin the host key instead of blindly trusting it.</td></tr>
     </tbody>
   </table>
   <p>The deploy step (git-pull flavour) is essentially:</p>
