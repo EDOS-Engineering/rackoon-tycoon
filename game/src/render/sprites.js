@@ -94,11 +94,11 @@ export function drawService(ctx, service, cx, cy, opts = {}) {
     ctx.restore();
   }
 
-  // Body — brand-colored rounded block with a subtle vertical gradient.
-  const grad = ctx.createLinearGradient(0, y, 0, y + size);
-  grad.addColorStop(0, lighten(service.color, 0.18));
-  grad.addColorStop(1, darken(service.color, 0.22));
-  ctx.fillStyle = grad;
+  // Body — brand-colored rounded block with a subtle vertical gradient. The
+  // gradient is cached per (color, y, size): buildings sit on fixed tile centers,
+  // so this is a small bounded set, and gradient coords are re-interpreted in the
+  // current transform at fill time (so it stays correct as the camera pans/zooms).
+  ctx.fillStyle = bodyGradient(ctx, service.color, y, size);
   roundRect(ctx, x, y, size, size, 14);
   ctx.fill();
 
@@ -248,19 +248,42 @@ function triangle(ctx, x1, y1, x2, y2, x3, y3) {
   ctx.fill();
 }
 
+// Cached building-body gradient (see drawService). Keyed by color|y|size.
+const _gradCache = new Map();
+function bodyGradient(ctx, color, y, size) {
+  const key = color + "|" + y + "|" + size;
+  let g = _gradCache.get(key);
+  if (g === undefined) {
+    g = ctx.createLinearGradient(0, y, 0, y + size);
+    g.addColorStop(0, lighten(color, 0.18));
+    g.addColorStop(1, darken(color, 0.22));
+    _gradCache.set(key, g);
+  }
+  return g;
+}
+
 export function lighten(hex, amt) {
   return mix(hex, "#ffffff", amt);
 }
 export function darken(hex, amt) {
   return mix(hex, "#000000", amt);
 }
+// Memoized: lighten/darken run many times per building per frame over a tiny,
+// fixed set of (color, amount) pairs — cache the result strings to skip the hex
+// parse + string rebuild in the render hot path.
+const _mixCache = new Map();
 function mix(a, b, t) {
+  const key = a + "|" + b + "|" + t;
+  let out = _mixCache.get(key);
+  if (out !== undefined) return out;
   const ca = hexToRgb(a);
   const cb = hexToRgb(b);
   const r = Math.round(ca.r + (cb.r - ca.r) * t);
   const g = Math.round(ca.g + (cb.g - ca.g) * t);
   const bl = Math.round(ca.b + (cb.b - ca.b) * t);
-  return `rgb(${r},${g},${bl})`;
+  out = `rgb(${r},${g},${bl})`;
+  _mixCache.set(key, out);
+  return out;
 }
 function hexToRgb(hex) {
   let h = hex.replace("#", "");
