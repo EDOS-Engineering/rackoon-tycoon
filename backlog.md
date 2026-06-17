@@ -10,6 +10,16 @@
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 - **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
 - **2026-06-17 — Phase 7 kickoff: architecture review + R2 (seedable RNG + headless harness).** Ran an architecture review (research subagent + `/improve-codebase-architecture`): the helper sim modules are clean seams but the simulation that composes them lives inside the 1616-line `LevelScene`; no headless sim; unseeded sim-path RNG. Recorded the architecture-first plan (R1–R6) + order + locked design decisions (time-compressed clock; both win models — milestone scenarios + endless free-run). Shipped **R2** (the first, decision-independent step): new `sim/rng.js` (mulberry32 seedable PRNG) threaded through the two sim-path randoms (`EventDirector` AZ-zone pick, `LoadModel.shouldDrop`), defaulting to `Math.random` for back-compat; new `tooling/headless.mjs` runs the sim modules under Node with no canvas and asserts seeded determinism. Removed the Sandbox "Cash Out" button (overlapped the reinvest slider, no goal to wrap up; Esc exits). → `sim/rng.js`, `waves/{events,load}.js`, `scenes/levelScene.js`, `tooling/headless.mjs`. headless 0 problems; browser smoke 0/0.
+- **2026-06-17 — Phase 7 T7.6 realism polish (feature branch).** New `sim/realism.js`
+  `RealismTracker` rolls up four operational signals real architects answer to: **latency-SLO
+  compliance**, **blast radius** (peak capacity-weighted fraction an incident downs), **RTO**
+  (longest post-establishment outage), and an **RPO proxy** (work dropped during an outage).
+  Added **auto-scaling warm-up lag** in `load.js` (autoScale capacity ramps over `WARMUP_TAU`
+  instead of snapping → spikes transiently overload). Surfaced via `Simulation.metrics()`
+  (milestones can target `sloCompliance`), an **OPS TELEMETRY** HUD chip, and company
+  save/resume; company mode gains a "Hold SLO ≥ 95%" milestone. Headless asserts all four
+  (incl. that pre-build "no route yet" time isn't scored as downtime). → `sim/{realism,simulation}.js`,
+  `waves/load.js`, `scenes/levelScene.js`, `levels/levels.js`, `tooling/headless.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — Phase 7 R1 + R3 shipped; Help overlay fixed.** **R1:** lifted the simulation out of the 1600-line `LevelScene` into a pure, headless, deterministic `sim/simulation.js` (`step(dt)` + `recomputeRoute()`; side-effects via a drained `emitted` queue; scene delegates state through accessors so the renderer/input are untouched) — a no-behaviour-change lift, with `tooling/headless.mjs` now fast-running a real `Simulation` to a seeded, byte-identical win. **R3:** new `waves/demand.js` `DemandModel.rateAt(t)` — a continuous living-economy curve (diurnal + weekday/weekend + seasonal + compounding growth), wired as the spawn-rate source when a level defines `demand{}`; sandbox now breathes/grows; HUD chip shows `Day N · HH:00 · phase`. **Help fix:** the legend's fixed 48px rows overlapped multi-line descriptions — now each row sizes to its wrapped line count and the card to the total. → `sim/simulation.js`, `waves/demand.js`, `scenes/levelScene.js`, `levels/levels.js`, `tooling/{headless,smoke}.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — UI polish + roadmap Epochs.** Fixed the palette tab overflow (bar width tracked the active group's service row, so narrow groups let the 6-tab row spill — SECURITY bled off; now the content area is `max(serviceRow, tabRow)` with fixed-width tabs, stable bar). Collapsed the title's 19-mission grid into a styled **Campaign dropdown** (two readable columns, modal). Perf: cached the building body gradient + color-mix in the render hot path. Added two roadmap Epochs to this backlog: **Phase 7** (living simulation — time-varying demand, compounding economy, richer incident deck, long-form "company" mode) and **Phase 8** (grand pivot — fork into a visual AWS SDK client, read-only first, hard security/dependency gates). → `palette.js`, `titleScene.js`, `sprites.js`, READMEs, `backlog.md`. smoke: 0/0, 60fps.
 - **2026-06-17 — T6.3 Secret Keeper (Secrets Manager).** 19th level: broker DB credentials through a new `secrets_manager` tile (Security group) instead of hard-coding them — `pathContainsAll:["secrets_manager"]`. Inserted before the DR finale; Secure domain now has 4 boss levels. → `catalog.js`, `levels.js`, `smoke.mjs`. smoke: 19 levels, 0/0.
@@ -405,9 +415,18 @@ Epoch makes the world *alive*.
   → new mode in `levels.js` + persistence in `save/`.
 - **T7.5 Balancing + telemetry** — surface the live signals (demand curve, margin,
   SLO burn, headroom) so the player can reason like an operator; tune curves headlessly.
-- **T7.6 Realism deepening** — model what real designers weigh: latency SLOs, blast
-  radius, scaling lag (warm-up), tech-debt/right-sizing drift, reserved-vs-on-demand
-  commitment risk over the long run.
+- **T7.6 Realism deepening. ✅ DONE (2026-06-17).** New `sim/realism.js` `RealismTracker`
+  (pure) rolls up the four ops numbers a real review grades: **latency-SLO compliance**
+  (served round-trips under `sloMs`), **blast radius** (peak capacity-weighted fraction an
+  incident takes offline), **RTO** (longest outage after the service was up), and an **RPO
+  proxy** (requests dropped during an outage). The fourth axis, **auto-scaling warm-up
+  lag**, lives in `load.js`: an autoScale tier's capacity now ramps toward demand over a
+  time constant (`WARMUP_TAU`) instead of snapping, so a spike transiently overloads (which
+  then shows in SLO/latency). Surfaced via `Simulation.metrics()` (so milestones can target
+  `sloCompliance`), an **OPS TELEMETRY** HUD chip, persisted across company save/resume, and
+  asserted in the headless harness (SLO counting, blast peak, RTO/RPO, pre-establishment
+  downtime excluded, warm-up ramp). The `company` level adds a "Hold SLO ≥ 95%" milestone +
+  `sloMs`. → `sim/{realism,simulation}.js`, `waves/load.js`, `scenes/levelScene.js`, `levels/levels.js`, `tooling/headless.mjs`. headless 0; smoke 0/0.
 
 #### Execution plan — architecture-first (from the Phase-7 architecture review)
 The helper sim modules are already clean seams (`billing`, `scheduler`, `load`,
@@ -492,10 +511,10 @@ the data-driven catalog/levels pattern):
   "free-run" company** mode (run until bankruptcy/quit, scored by peak). Player picks
   per mission. Shapes R6 (`mode: scenario|freerun`, milestone-or-peak `evaluate`).
 
-**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → ~~R4~~ ✅ → ~~R5~~ ✅ → ~~R6~~ ✅ — **R-series complete.** Remaining: T7.6 realism (latency SLOs,
-scaling-lag/warm-up in `LoadModel`, blast radius via the deck, RPO/RTO) rides on the
-stable seams. **Single best first step: R2.** Each step lands runnable + smoke-checked,
-and steps 3–6 each ship ≥1 headless balancing assertion.
+**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → ~~R4~~ ✅ → ~~R5~~ ✅ → ~~R6~~ ✅ → ~~T7.6~~ ✅ — **Phase 7 complete.** T7.6 (latency
+SLOs, scaling-lag/warm-up in `LoadModel`, blast radius, RPO/RTO) landed on the stable
+seams the R-series built. Every step shipped runnable + smoke-checked + a headless
+balancing assertion. **Next horizon: Phase 8** (the visual AWS-SDK pivot).
 
 > **End of Phase 7:** levels feel like operating a real, growing AWS system over time
 > — demand breathes, money compounds, and the unexpected tests the architecture.

@@ -15,6 +15,7 @@ import { Grid } from "../game/src/grid/grid.js";
 import { SERVICES } from "../game/src/services/catalog.js";
 import { Simulation } from "../game/src/sim/simulation.js";
 import { MilestoneSet } from "../game/src/sim/milestones.js";
+import { RealismTracker } from "../game/src/sim/realism.js";
 import { DemandModel } from "../game/src/waves/demand.js";
 import { Economy } from "../game/src/economy/economy.js";
 import { IncidentDeck } from "../game/src/waves/incidents.js";
@@ -310,6 +311,52 @@ const sameState =
   co2.grid.edges.size === co.grid.edges.size;
 if (!sameState) problems.push("company: snapshot/restore should preserve the run state + board");
 
+// 10. Operational realism (Phase 7 T7.6): SLO compliance, blast radius, RTO/RPO,
+//     and auto-scaling warm-up lag.
+const rt = new RealismTracker();
+rt.onComplete(40, 60); // in SLO
+rt.onComplete(80, 60); // breached
+if (!(rt.sloMet === 1 && rt.sloBreached === 1 && Math.abs(rt.sloCompliance - 0.5) < 1e-9))
+  problems.push("realism: SLO compliance mis-counted");
+rt.tick(1, true, 100, 25); // 25% of capacity offline
+if (Math.abs(rt.peakBlastRadius - 0.25) > 1e-9) problems.push("realism: blast radius wrong");
+rt.tick(1, true, 100, 50); // peak rises to 50%
+if (Math.abs(rt.peakBlastRadius - 0.5) > 1e-9) problems.push("realism: peak blast radius should track the max");
+// Outage: service was up, now no route for 3s → RTO 3, two drops = RPO 2.
+rt.tick(2, false, 100, 100);
+rt.onOutageDrop(); rt.onOutageDrop();
+rt.tick(1, false, 100, 100);
+if (!(rt.worstRtoSec >= 3 - 1e-9)) problems.push("realism: RTO should track the outage duration");
+if (!rt.inOutage) problems.push("realism: should report being in an outage");
+rt.tick(1, true, 100, 0); // recover
+if (rt.inOutage) problems.push("realism: recovery should clear the outage");
+if (rt.dataLost !== 2) problems.push("realism: RPO data-lost count wrong");
+// Pre-establishment downtime must NOT score (no route built yet ≠ an outage).
+const rt2 = new RealismTracker();
+rt2.tick(5, false, 10, 10);
+if (rt2.worstRtoSec > 0) problems.push("realism: pre-establishment 'no route yet' should not count as downtime");
+
+// Auto-scaling warm-up: an autoScale tier's capacity ramps toward demand instead
+// of snapping, so the first tick is near base and it climbs over time (≤ 2× base).
+const gw = new Grid(6, 6);
+const ab = gw.place(SERVICES.aurora_sv2, 2, 2);
+const baseCap = Math.max(1, SERVICES.aurora_sv2.throughput);
+const lmw = new LoadModel(makeRng(1));
+lmw._demand.set("2,2", baseCap * 4); // heavy demand → target pinned at 2× base
+lmw.update(gw, 1 / 60);
+const warm1 = ab._warmCap;
+for (let i = 0; i < 600; i++) lmw.update(gw, 1 / 60);
+const warm2 = ab._warmCap;
+if (!(warm1 < warm2)) problems.push("warm-up: capacity should ramp up over time, not instantly");
+if (!(warm1 < baseCap * 1.5)) problems.push("warm-up: first-tick capacity should still be near base (lag)");
+if (!(warm2 > baseCap && warm2 <= baseCap * 2 + 1e-6)) problems.push("warm-up: warmed capacity should approach (but not exceed) 2× base");
+
+// Integration: the composed company run exposes sane realism metrics.
+const cm = co.metrics();
+if (!(cm.sloCompliance >= 0 && cm.sloCompliance <= 1)) problems.push("realism: sloCompliance out of [0,1] in a real run");
+if (!(cm.peakBlastRadius >= 0 && cm.peakBlastRadius <= 1)) problems.push("realism: peakBlastRadius out of [0,1] in a real run");
+if (typeof cm.worstRtoSec !== "number" || typeof cm.dataLost !== "number") problems.push("realism: RTO/RPO metrics missing from a real run");
+
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
 console.log("headless run billTotal:", bill.totalSpent.toFixed(2));
@@ -324,5 +371,6 @@ console.log("sandbox demand run:", JSON.stringify({
 console.log("incident deck draws(seed101):", dkA.length, " firstGap:", firstGap.toFixed(1), " lastGap:", lastGap.toFixed(1));
 console.log("deck sim run:", JSON.stringify({ scripted: scriptedCount, withDeck: deckRunA.incidents, outcome: deckRunA.outcome, deterministic: JSON.stringify(deckRunA) === JSON.stringify(deckRunB) }));
 console.log("company run:", JSON.stringify({ mode: co.mode, success: co.success, budget: Math.round(co.budget), day: +co.simDays.toFixed(1), milestones: mEvalRun.doneCount + "/" + mEvalRun.total, snapshotRestored: sameState }));
+console.log("realism:", JSON.stringify({ slo: +cm.sloCompliance.toFixed(3), peakBlast: +cm.peakBlastRadius.toFixed(3), worstRto: +cm.worstRtoSec.toFixed(1), dataLost: cm.dataLost, warmRamp: warm1.toFixed(1) + "→" + warm2.toFixed(1) + " (base " + baseCap + ")" }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);
