@@ -171,7 +171,7 @@ export class TitleScene extends Scene {
     }
 
     const cx = W / 2;
-    const topY = H * 0.3;
+    const topY = H * 0.22;
 
     // Logo: raccoon in a soft amber halo. Eyes follow the cursor for charm.
     const lookX = clamp((this.game.input.x - cx) / (W * 0.5), -1, 1) * 0.6;
@@ -180,32 +180,32 @@ export class TitleScene extends Scene {
 
     ctx.save();
     ctx.shadowColor = "rgba(255,179,71,0.5)";
-    ctx.shadowBlur = 50;
-    drawRaccoon(ctx, cx, topY + bob, 150, { look: { x: lookX, y: lookY } });
+    ctx.shadowBlur = 44;
+    drawRaccoon(ctx, cx, topY + bob, 128, { look: { x: lookX, y: lookY } });
     ctx.restore();
 
     // Wordmark.
     ctx.textAlign = "center";
     ctx.fillStyle = PALETTE.text;
     ctx.font = FONT.title;
-    ctx.fillText("Rackoon", cx, topY + 150);
+    ctx.fillText("Rackoon", cx, topY + 128);
     ctx.fillStyle = PALETTE.accent;
-    ctx.fillText("Tycoon", cx, topY + 214);
+    ctx.fillText("Tycoon", cx, topY + 184);
 
     // Mascot emoji flourish.
-    ctx.font = "40px system-ui, sans-serif";
-    ctx.fillText("🦝", cx + 220, topY + 150);
+    ctx.font = "36px system-ui, sans-serif";
+    ctx.fillText("🦝", cx + 200, topY + 128);
 
     // Tagline.
     ctx.fillStyle = PALETTE.textDim;
     ctx.font = FONT.ui;
-    ctx.fillText(BRAND.tagline, cx, topY + 252);
+    ctx.fillText(BRAND.tagline, cx, topY + 216);
 
     // PLAY button.
     const bw = 220;
-    const bh = 60;
+    const bh = 54;
     const bx = cx - bw / 2;
-    const by = topY + 290;
+    const by = topY + 248;
     this._btn = { x: bx, y: by, w: bw, h: bh };
 
     const pulse = 0.5 + 0.5 * Math.sin(this.t * 3);
@@ -223,20 +223,22 @@ export class TitleScene extends Scene {
     ctx.fillText(playLabel, cx, by + bh / 2 + 1);
     ctx.textBaseline = "alphabetic";
 
-    // Difficulty selector (T3.8) then the level-select strip below it.
-    this._renderDifficulty(ctx, cx, by + bh + 18, W);
-    this._renderLevelSelect(ctx, cx, by + bh + 92, W);
-    this._renderSandboxBtn(ctx, cx, by + bh + 170, W);
+    // Difficulty selector (T3.8) then the compact level grid below it.
+    this._renderDifficulty(ctx, cx, by + bh + 16, W);
+    const lvlBottom = this._renderLevelSelect(ctx, cx, by + bh + 80, W);
 
-    // Best score + role flavor.
-    ctx.fillStyle = PALETTE.textFaint;
-    ctx.font = FONT.uiSmall;
+    // Reserved hover line: full name + subtitle of the focused mission (keeps the
+    // grid chips terse). When nothing is hovered, show a compact progress stat.
     ctx.textAlign = "center";
-    const flavor =
-      this.totalStars > 0
-        ? "Rocky's stars: " + this.totalStars + " ★   •   Best routed: " + this.best
-        : "Meet Rocky, your raccoon SRE. Build the cloud. Tame the traffic.";
-    ctx.fillText(flavor, cx, H - 20);
+    ctx.font = FONT.uiSmall;
+    const hl = this._hoverLevelId ? getLevel(this._hoverLevelId) : null;
+    ctx.fillStyle = hl ? PALETTE.textDim : PALETTE.textFaint;
+    const label = hl
+      ? hl.name + (hl.subtitle ? "  —  " + hl.subtitle : "")
+      : LEVEL_ORDER.length + " missions  ·  " + this.totalStars + " ★ earned  ·  best routed " + this.best + "  ·  hover for details";
+    ctx.fillText(label, cx, lvlBottom + 18);
+
+    this._renderSandboxBtn(ctx, cx, lvlBottom + 30, W);
 
     // New Game button (top-right) + its confirmation modal (drawn on top).
     this._renderNewGameBtn(ctx, W, H);
@@ -369,65 +371,73 @@ export class TitleScene extends Scene {
     ctx.textAlign = "center";
   }
 
-  // A row of level chips: locked ones are dimmed and unclickable; unlocked ones
-  // show earned stars and launch on click.
+  // Compact wrapped grid of level chips. Dense: each chip shows its number, a
+  // short name, and earned stars; the hovered chip's full name+subtitle is shown
+  // on a reserved label line by the caller. Returns the grid's bottom Y.
   _renderLevelSelect(ctx, cx, y, W) {
     this._levelBtns = [];
+    this._hoverLevelId = null;
     const n = LEVEL_ORDER.length;
-    const cw = 128; // narrower chips to fit 7 levels on screen
-    const ch = 54;
-    const gap = 8;
-    const totalW = n * cw + (n - 1) * gap;
-    let x = cx - totalW / 2;
+    const cw = 100, ch = 40, gap = 6;
+    // Pick a column count that keeps the grid tight and on-screen.
+    const maxRowW = Math.min(W - 80, 920);
+    const cols = Math.max(4, Math.min(9, Math.floor((maxRowW + gap) / (cw + gap))));
 
-    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    for (let i = 0; i < n; i++) {
+      const id = LEVEL_ORDER[i];
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      const itemsInRow = Math.min(cols, n - row * cols);
+      const rowW = itemsInRow * cw + (itemsInRow - 1) * gap;
+      const x = cx - rowW / 2 + col * (cw + gap);
+      const cy = y + row * (ch + gap);
 
-    for (const id of LEVEL_ORDER) {
       const lvl = getLevel(id);
       const unlocked = isUnlocked(id, FIRST_LEVEL);
       const best = bestFor(id);
-      const rect = { id, x, y: y + 4, w: cw, h: ch, unlocked };
-      this._levelBtns.push(rect);
+      this._levelBtns.push({ id, x, y: cy, w: cw, h: ch, unlocked });
+      const over = unlocked && this._in({ x, y: cy, w: cw, h: ch });
+      if (over) this._hoverLevelId = id;
 
-      const over =
-        unlocked &&
-        this.game.input.x >= x &&
-        this.game.input.x <= x + cw &&
-        this.game.input.y >= y + 4 &&
-        this.game.input.y <= y + 4 + ch;
-
+      ctx.globalAlpha = unlocked ? 1 : 0.4;
       ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
-      ctx.globalAlpha = unlocked ? 1 : 0.45;
-      roundRect(ctx, x, y + 4, cw, ch, 10);
+      roundRect(ctx, x, cy, cw, ch, 7);
       ctx.fill();
-      ctx.strokeStyle = unlocked ? "rgba(255,179,71,0.35)" : "rgba(255,255,255,0.06)";
-      ctx.lineWidth = 1;
-      roundRect(ctx, x, y + 4, cw, ch, 10);
+      ctx.strokeStyle = best && best.stars
+        ? PALETTE.accent
+        : unlocked ? (over ? "rgba(255,179,71,0.6)" : "rgba(255,179,71,0.28)") : "rgba(255,255,255,0.06)";
+      ctx.lineWidth = best && best.stars ? 1.5 : 1;
+      roundRect(ctx, x, cy, cw, ch, 7);
       ctx.stroke();
 
-      ctx.fillStyle = unlocked ? PALETTE.text : PALETTE.textFaint;
-      ctx.font = "700 12px system-ui, sans-serif";
+      // Number badge + short name on line 1.
       ctx.textAlign = "left";
-      // Truncate long names to fit the narrower chip
-      const nameStr = (unlocked ? "" : "🔒 ") + lvl.name;
-      ctx.fillText(nameStr.length > 18 ? nameStr.slice(0, 17) + "…" : nameStr, x + 8, y + 22);
+      ctx.font = "700 9px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.textFaint;
+      ctx.fillText(String(i + 1).padStart(2, "0"), x + 8, cy + 16);
+      ctx.font = "700 11px system-ui, sans-serif";
+      ctx.fillStyle = unlocked ? PALETTE.text : PALETTE.textFaint;
+      const nm = unlocked ? lvl.name : "🔒 " + lvl.name;
+      ctx.fillText(nm.length > 13 ? nm.slice(0, 12) + "…" : nm, x + 24, cy + 16);
 
-      // Stars earned (or a hint).
-      ctx.font = "12px system-ui, sans-serif";
+      // Stars (or status) on line 2.
+      ctx.font = "10px system-ui, sans-serif";
       if (best && best.stars) {
         ctx.fillStyle = PALETTE.accent;
-        ctx.fillText("★".repeat(best.stars) + "☆".repeat(3 - best.stars), x + 8, y + 40);
+        ctx.fillText("★".repeat(best.stars) + "☆".repeat(3 - best.stars), x + 8, cy + 31);
       } else if (unlocked) {
         ctx.fillStyle = PALETTE.textFaint;
-        ctx.fillText("☆☆☆ not cleared", x + 8, y + 40);
+        ctx.fillText("☆☆☆", x + 8, cy + 31);
       } else {
         ctx.fillStyle = PALETTE.textFaint;
-        ctx.fillText("win prev. to unlock", x + 8, y + 40);
+        ctx.fillText("locked", x + 8, cy + 31);
       }
       ctx.globalAlpha = 1;
-      x += cw + gap;
     }
     ctx.textAlign = "center";
+    const rows = Math.ceil(n / cols);
+    return y + rows * (ch + gap) - gap;
   }
 
   // Sandbox button — always unlocked, separate from the campaign chain.
