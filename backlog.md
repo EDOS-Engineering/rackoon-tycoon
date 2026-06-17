@@ -159,20 +159,84 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 
 > **End of Phase 4:** complete, polished, shippable. Final commit.
 
-### 🔵 PHASE 5 — Deep networking layer (deferred)
+### 🔵 PHASE 5 — Deep networking layer (typed connections)
 
-**Sprint 5 — Typed connections & VPC topology**
-- [ ] T5.1 **Typed connections** — edges gain a *type* mapping to a real AWS
-      networking construct, each with distinct visuals + gameplay effects:
-      plain VPC link, Gateway VPC Endpoint (near-zero data-transfer cost),
-      PrivateLink, Transit Gateway, Direct Connect, VPC Peering.
-      Connection-type picker in the build bar.
-      → `grid.js`, `gridRenderer`, `ui/palette`, `economy/billing`, `levelScene`
-- [ ] T5.2 Per-type topology rules — tighten `canConnect` and billing per connection
-      type (e.g. Gateway Endpoint only valid Gate/S3 or Gate/DynamoDB pairs,
-      Direct Connect only valid with on-prem/partner zones added in 3b).
+**Sprint 5 — Typed connections & VPC topology.** Detailed plan below; sized for
+one session. Foundation (`services/connections.js`) already landed.
 
-> **End of Phase 5:** the wire layer becomes a real VPC networking sim.
+#### Design decision (conflict resolution)
+The original T5.1 note listed "Gateway VPC Endpoint" and "Direct Connect" as
+connection *types*. Resolved as follows, to avoid redundancy and unmodelled nodes:
+- **Gateway VPC Endpoint stays a *building*** (added in Phase 3b as `vpc_endpoint`,
+  already restricted to S3/DynamoDB via `validSinks`). Not duplicated as a type.
+- **Direct Connect deferred** — needs an on-prem/partner node the catalog doesn't
+  model. Park until an on-prem tile exists (would be a Phase 3b-style catalog add).
+- Connection **types** therefore model the inter-service network constructs that
+  are *not* tiles: **VPC link** (default), **VPC Peering**, **Transit Gateway**,
+  **PrivateLink**.
+
+#### Connection-type table (implemented in `services/connections.js` ✅)
+| id | real AWS | transferMul | crossAzExempt | topology rule | color |
+|----|----------|-------------|---------------|---------------|-------|
+| `vpc` | same-VPC link (default) | 1.0 | no | any `canWire` pair | cyan |
+| `peering` | VPC Peering (1:1, non-transitive) | 1.0 | no | any `canWire` pair | green |
+| `tgw` | Transit Gateway (hub, transitive) | 1.6 | no | any `canWire` pair | magenta |
+| `privatelink` | PrivateLink (interface endpoint) | 1.3 | **yes** | exactly one end is a sink/storage | blue |
+
+#### Tasks
+- [x] **T5.0 Foundation** — `services/connections.js`: `CONN` records, `CONN_ORDER`,
+      `DEFAULT_CONN`, `getConn`, `connTypeAllows` (PrivateLink needs one sink end).
+- [ ] **T5.1 Typed edges + picker + visuals + billing**
+  1. **`grid/grid.js`** — store edge type. Add `this.edgeType = new Map()` (edgeKey→typeId).
+     `addEdge(aKey,bKey,type="vpc")` records it; `_removeEdgeByKeys` deletes it;
+     new `getEdgeType(aKey,bKey)`; `forEachEdge(fn)` passes `type` as 5th arg.
+     (grid stays import-free — default type is the literal `"vpc"`.)
+  2. **`scenes/levelScene.js`** —
+     - State: `this.connType = DEFAULT_CONN`. Import `CONN`, `getConn`, `connTypeAllows`,
+       `CONN_ORDER` from connections.js.
+     - `_commitWire`: after `canWire`, also require `connTypeAllows(this.connType,a,b)`;
+       pass `this.connType` to `grid.addEdge`. Reject + (optional) sfx on fail.
+     - Wire preview validity also checks `connTypeAllows`.
+     - Key `C` cycles `connType` through `CONN_ORDER` (and sync from palette click).
+     - Billing (in `_updatePackets` visit cb): read the edge type between `prevKey`
+       and the entered key via `grid.getEdgeType`; fold into the hop cost:
+       `xferMul = tileMul * conn.transferMul`, then add `crossAzSurcharge` only when
+       `crossAz && !conn.crossAzExempt` (PrivateLink crossing an AZ pays no surcharge).
+     - Help legend: add a "Connections" row; update the wire-tool blurb.
+  3. **`ui/palette.js`** — connection-type picker in the build bar.
+     - `this.connType = DEFAULT_CONN`. Lay out 4 small chips (short label, type color
+       when active) as a strip; add `_connRects` + hit-testing in `handleClick`
+       (test before tabs/buttons). Hover a chip → reuse `_panel` to show its blurb +
+       examTip. Scene reads `palette.connType` (single source of truth; `C` key also
+       updates it).
+  4. **`render/gridRenderer.js`** — `drawWires` colors each edge's solid core by
+     `getConn(type).color` (per-edge stroke, not one batched pass). Keep glow + flow
+     dash generic. Cross-AZ amber overlay only when the edge is cross-AZ **and not**
+     `crossAzExempt` (PrivateLink stays untinted). Import `getConn`.
+- [ ] **T5.2 Per-type topology rules** — covered by `connTypeAllows` (PrivateLink
+      sink-end rule) enforced at wire-commit + preview. Keep the other three permissive
+      (their lesson is cost/visual + the transitivity note in tooltips). One optional
+      boss-level hook: a level whose `winRequires` demands a `privatelink` edge to a
+      specific sink (mirrors the `pathContainsAll` pattern) — only if time allows.
+
+#### Verification (`tooling/smoke.mjs`)
+- `connections` import OK; `CONN_ORDER.length === 4`; `connTypeAllows("privatelink", edge, sink)`
+  true, `connTypeAllows("privatelink", edge, edge)` false.
+- `grid.addEdge(a,b,"tgw")` → `getEdgeType` returns `"tgw"`; default is `"vpc"`.
+- Scene: wire a `tgw` edge cross-AZ → higher per-hop charge than a `vpc` edge (compare
+  `bill.transferSpent` deltas, or assert the cost formula directly).
+- PrivateLink crossing an AZ is **not** amber-tinted / pays no surcharge (assert via the
+  cost formula or a flag exposed for test).
+
+#### Deferred (note, don't silently drop)
+- **Transitive-routing simulation** — modelling peering's non-transitivity vs TGW's
+  transitive hub would require per-edge path constraints in BFS (a request may not
+  traverse *through* a peering-linked node to a third VPC). Out of scope for one
+  session; captured as narrative in tooltips/examTips. Candidate **Phase 5b**.
+- **Direct Connect** — needs an on-prem node (catalog add first).
+
+> **End of Phase 5:** wires carry a real AWS networking construct — typed, priced,
+> coloured, and topology-checked. Transitive-routing sim is the Phase 5b stretch.
 
 ---
 
