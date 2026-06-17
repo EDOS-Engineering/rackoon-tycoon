@@ -17,6 +17,9 @@ export class ResultsScene extends Scene {
     this.r = payload || {};
     this.t = 0;
 
+    // Company (freerun) runs render a dedicated Run Report instead of the
+    // scenario verdict panel.
+    this.isCompany = this.r.mode === "freerun";
     this.won = this.r.outcome === OUTCOME.WIN;
     this.stars = this.r.stars || 0;
     this.scoreVal = this.r.score || 0;
@@ -90,6 +93,11 @@ export class ResultsScene extends Scene {
     g.addColorStop(1, "#0c1014");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
+
+    if (this.isCompany) {
+      this._renderCompany(ctx, W, H);
+      return;
+    }
 
     const cx = W / 2;
     const panW = 480;
@@ -237,6 +245,160 @@ export class ResultsScene extends Scene {
     }
   }
 
+  // ---- Company (free-run) Run Report ----------------------------------------
+  // A purpose-built end-of-run card: banked-vs-folded verdict, the milestone
+  // checklist, the ops scorecard (SLO / blast / RTO / RPO / peak), the business
+  // line, and the score. Surfaces everything the Phase-7 sim tracked.
+  _renderCompany(ctx, W, H) {
+    const cx = W / 2;
+    const panW = 520;
+    const ms = this.r.milestones || { items: [], doneCount: 0, total: 0 };
+    const ops = this.r.ops || {};
+    const examLines = this.examTip ? wrapTip(this.examTip, 60) : [];
+    const examH = examLines.length > 0 ? 26 + examLines.length * 15 : 0;
+
+    const headH = 188; // rocky + verdict + score + stars
+    const msH = 28 + ms.items.length * 22;
+    const opsH = 70;
+    const bizH = 64;
+    const panH = headH + msH + opsH + bizH + examH + 84;
+    const px = cx - panW / 2;
+    const py = Math.max(8, H / 2 - panH / 2);
+
+    // Panel.
+    ctx.fillStyle = PALETTE.bgPanel;
+    roundRect(ctx, px, py, panW, panH, 18);
+    ctx.fill();
+    ctx.strokeStyle = this.won ? "rgba(126,217,87,0.4)" : "rgba(255,94,94,0.35)";
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, px, py, panW, panH, 18);
+    ctx.stroke();
+
+    drawRaccoon(ctx, cx, py + 6, 70, { look: { x: Math.sin(this.t * 1.5) * 0.4, y: 0.1 } });
+
+    // Verdict.
+    ctx.textAlign = "center";
+    ctx.fillStyle = this.won ? PALETTE.good : PALETTE.bad;
+    ctx.font = "800 28px system-ui, sans-serif";
+    ctx.fillText(this.won ? "Run Banked! 💰" : "Company Folded", cx, py + 84);
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.font = FONT.uiSmall;
+    const reason = this.won
+      ? "Cashed out on day " + Math.floor(ops.simDays || 0)
+      : "Bankrupt on day " + Math.floor(ops.simDays || 0);
+    ctx.fillText("Company Mode  ·  " + reason, cx, py + 104);
+
+    // Score + stars side by side.
+    ctx.fillStyle = PALETTE.accent;
+    ctx.font = "800 30px system-ui, sans-serif";
+    ctx.fillText(String(this.scoreVal), cx, py + 142);
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.fillText("SCORE", cx, py + 156);
+    this._drawStars(ctx, cx, py + 176);
+
+    // ---- Milestones checklist ----
+    let y = py + headH + 6;
+    ctx.textAlign = "left";
+    ctx.font = "700 11px system-ui, sans-serif";
+    ctx.fillStyle = ms.doneCount === ms.total && ms.total > 0 ? PALETTE.good : PALETTE.accent;
+    ctx.fillText("🎯 MILESTONES  " + ms.doneCount + " / " + ms.total, px + 30, y);
+    y += 18;
+    ctx.font = "12px system-ui, sans-serif";
+    for (const m of ms.items) {
+      ctx.textAlign = "left";
+      ctx.fillStyle = m.done ? PALETTE.good : PALETTE.textFaint;
+      ctx.fillText(m.done ? "✓" : "▢", px + 30, y);
+      ctx.fillStyle = m.done ? PALETTE.text : PALETTE.textDim;
+      ctx.fillText(m.label, px + 48, y);
+      ctx.textAlign = "right";
+      ctx.fillStyle = m.done ? PALETTE.good : PALETTE.textDim;
+      ctx.fillText(fmtMetric(m), px + panW - 30, y);
+      y += 22;
+    }
+
+    // ---- Ops scorecard (3 + 2 cells) ----
+    y += 8;
+    const slo = ops.sloCompliance != null ? ops.sloCompliance : 1;
+    const blast = ops.peakBlastRadius || 0;
+    const cells = [
+      ["SLO", Math.round(slo * 100) + "%", slo >= 0.99 ? PALETTE.good : slo >= 0.95 ? PALETTE.warn : PALETTE.bad],
+      ["Peak blast", Math.round(blast * 100) + "%", blast < 0.34 ? PALETTE.good : blast < 0.67 ? PALETTE.warn : PALETTE.bad],
+      ["Worst RTO", (ops.worstRtoSec || 0).toFixed(0) + "s", (ops.worstRtoSec || 0) < 1 ? PALETTE.good : PALETTE.warn],
+      ["Data lost", String(ops.dataLost || 0), (ops.dataLost || 0) === 0 ? PALETTE.good : PALETTE.bad],
+      ["Peak load", String(ops.peakConcurrent || 0), PALETTE.accent],
+    ];
+    const cellW = (panW - 60) / cells.length;
+    for (let i = 0; i < cells.length; i++) {
+      const [label, val, color] = cells[i];
+      const ccx = px + 30 + cellW * i + cellW / 2;
+      ctx.textAlign = "center";
+      ctx.font = "800 16px system-ui, sans-serif";
+      ctx.fillStyle = color;
+      ctx.fillText(val, ccx, y + 16);
+      ctx.font = "9px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.textFaint;
+      ctx.fillText(label.toUpperCase(), ccx, y + 32);
+    }
+    y += opsH;
+
+    // ---- Business line ----
+    const rows = [
+      ["Requests served", String(this.r.success || 0), PALETTE.text],
+      ["Gross revenue", "$" + Math.round(this.r.revenue || 0), PALETTE.good],
+      ["AWS bill (run + transfer)", "$" + Math.round(this.bill.total), PALETTE.warn],
+      ["Budget remaining", "$" + Math.round(this.r.budget || 0), PALETTE.accent],
+    ];
+    ctx.font = FONT.uiSmall;
+    for (const [label, val, color] of rows) {
+      ctx.textAlign = "left";
+      ctx.fillStyle = PALETTE.textDim;
+      ctx.fillText(label, px + 30, y + 11);
+      ctx.textAlign = "right";
+      ctx.fillStyle = color;
+      ctx.fillText(val, px + panW - 30, y + 11);
+      y += 16;
+    }
+
+    // ---- Exam tip ----
+    if (examLines.length > 0) {
+      const tipX = px + 18;
+      const tipW = panW - 36;
+      const tipY = y + 8;
+      ctx.fillStyle = "rgba(255,179,71,0.08)";
+      roundRect(ctx, tipX, tipY, tipW, examH - 2, 8);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,179,71,0.25)";
+      ctx.lineWidth = 1;
+      roundRect(ctx, tipX, tipY, tipW, examH - 2, 8);
+      ctx.stroke();
+      ctx.textAlign = "left";
+      ctx.font = "700 11px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.accent;
+      ctx.fillText("📚  SAA-C03 EXAM TIP", tipX + 10, tipY + 11);
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.textDim;
+      let ety = tipY + 24;
+      for (const ln of examLines) {
+        ctx.fillText(ln, tipX + 10, ety);
+        ety += 15;
+      }
+    }
+
+    // ---- Buttons: New run + Menu ----
+    this._nextId = null;
+    const bw = 180;
+    const bh = 44;
+    const by2 = py + panH - 58;
+    const gap = 12;
+    const totalW = bw * 2 + gap;
+    const bx = cx - totalW / 2;
+    this._btns.replay = { x: bx, y: by2, w: bw, h: bh };
+    this._btns.menu = { x: bx + bw + gap, y: by2, w: bw, h: bh };
+    this._button(ctx, this._btns.replay, "↻ New run", PALETTE.accent, "#1a120a");
+    this._button(ctx, this._btns.menu, "Menu", PALETTE.bgPanelHi, PALETTE.text);
+  }
+
   _drawStars(ctx, cx, y) {
     const gap = 46;
     for (let i = 0; i < 3; i++) {
@@ -317,6 +479,16 @@ function wrapTip(text, n) {
 
 function money(n) {
   return (n >= 0 ? "+$" : "-$") + Math.abs(Math.round(n));
+}
+
+// Format a milestone's current/target for the report, per its metric type.
+function fmtMetric(m) {
+  const v = m.value || 0;
+  const t = m.target;
+  if (m.metric === "revenue") return "$" + Math.round(v) + " / $" + Math.round(t);
+  if (m.metric === "sloCompliance") return Math.round(v * 100) + "% / " + Math.round(t * 100) + "%";
+  if (m.metric === "simDays") return v.toFixed(1) + " / " + t;
+  return Math.round(v) + " / " + t;
 }
 function clamp01(v) {
   return v < 0 ? 0 : v > 1 ? 1 : v;
