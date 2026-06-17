@@ -15,6 +15,7 @@ import { PALETTE, FONT } from "../theme.js";
 import { Grid, TILE } from "../grid/grid.js";
 import { getLevel } from "../levels/levels.js";
 import { SERVICES, getService, canWire } from "../services/catalog.js";
+import { getConn, connTypeAllows, CONN_ORDER, DEFAULT_CONN } from "../services/connections.js";
 import { findRoundTrip, gateHasRoute } from "../grid/pathfind.js";
 import { Packet } from "../entities/packet.js";
 import { BuildPalette } from "../ui/palette.js";
@@ -124,6 +125,8 @@ export class LevelScene extends Scene {
     this.briefingAutoStart = 45; // failsafe: auto-begin after this long
     this.showHelp = false; // legend overlay (toggled with H)
     this._beginRect = null; // Begin button hit-box (set during render)
+    this.connType = DEFAULT_CONN; // active wire connection type (Phase 5: T5.1)
+    this.palette.connType = this.connType; // keep palette picker in sync
   }
 
   _fitZoom() {
@@ -160,6 +163,19 @@ export class LevelScene extends Scene {
     if (input.pressed("Escape")) {
       this.game.scenes.go("title");
       return;
+    }
+
+    // C cycles the active wire connection type (Phase 5: T5.1). The palette
+    // picker is the shared source of truth — keep both in step here and below.
+    if (input.pressed("KeyC")) {
+      const i = CONN_ORDER.indexOf(this.connType);
+      this.connType = CONN_ORDER[(i + 1) % CONN_ORDER.length];
+      this.palette.connType = this.connType;
+      audio.play("wire");
+    }
+    // A palette click may have changed the type — adopt it.
+    if (this.palette.connType && this.palette.connType !== this.connType) {
+      this.connType = this.palette.connType;
     }
 
     // ---- Win/lose: once decided, freeze the sim and flip to results after a
@@ -641,10 +657,12 @@ export class LevelScene extends Scene {
     const b = this.grid.getBuilding(toTile.col, toTile.row);
     if (!a || !b) return;
     if (!canWire(a.service, b.service)) return;
+    // Per-type topology rule (e.g. PrivateLink needs a sink endpoint).
+    if (!connTypeAllows(this.connType, a.service, b.service)) return;
 
     const aKey = Grid.key(from.col, from.row);
     const bKey = Grid.key(toTile.col, toTile.row);
-    if (this.grid.addEdge(aKey, bKey)) {
+    if (this.grid.addEdge(aKey, bKey, this.connType)) {
       this._routeDirty = true;
       audio.play("wire");
     }
@@ -707,10 +725,15 @@ export class LevelScene extends Scene {
         if (prevKey) {
           const [pc, pr] = Grid.parseKey(prevKey);
           const prevB = this.grid.getBuilding(pc, pr);
+          // The wire's connection type adds its standing per-hop processing fee
+          // (Phase 5: TGW +2 always; PrivateLink +1.3 but exempt from the
+          // cross-AZ penalty since traffic stays private; VPC/Peering +0).
+          const conn = getConn(this.grid.getEdgeType(prevKey, key));
+          xferMul += conn.hopCost || 0;
           const touchesGate =
             (b && b.service.role === ROLE.GATE) ||
             (prevB && prevB.service.role === ROLE.GATE);
-          if (!touchesGate &&
+          if (!touchesGate && !conn.crossAzExempt &&
               zoneOfColumn(pc, this.grid.cols) !== zoneOfColumn(c, this.grid.cols)) {
             xferMul += BILL.crossAzPenalty;
           }
@@ -899,8 +922,10 @@ export class LevelScene extends Scene {
       if (this.hoverTile) {
         const a = this.grid.getBuilding(this.wireFrom.col, this.wireFrom.row);
         const b = this.grid.getBuilding(this.hoverTile.col, this.hoverTile.row);
-        // Wires span any distance — validity is purely service-appropriateness.
-        valid = a && b && canWire(a.service, b.service);
+        // Wires span any distance — validity is service-appropriateness plus the
+        // active connection type's topology rule (e.g. PrivateLink → sink end).
+        valid = a && b && canWire(a.service, b.service) &&
+                connTypeAllows(this.connType, a.service, b.service);
       }
       drawPendingWire(
         ctx,
@@ -1250,6 +1275,7 @@ export class LevelScene extends Scene {
     const rows = [
       ["🎯", "Goal", "Route the target number of guests: gate → compute → database → back."],
       ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag from one service to another to wire — any distance, no adjacency needed; right-click a wire to cut."],
+      ["🔌", "Connection types", "Pick the wire type in the bar (or press C): VPC link, VPC Peering, Transit Gateway, PrivateLink. Each prices the hop differently — TGW always adds processing; PrivateLink avoids the cross-AZ penalty but must end at a service (sink)."],
       ["💰", "AWS bill", "Buildings and data transfer burn your budget (top-left). Intra-AZ traffic is FREE; a wire crossing an AZ band (amber) costs 8× per hop. Multi-AZ resilience is real money — keep chatty tiers in one AZ. Don't let the budget hit $0."],
       ["📈", "Waves", "Traffic ramps up in phases (top-right). Add capacity before the peaks arrive."],
       ["🔥", "Overload", "A building past its throughput queues up — latency climbs, then it drops guests. Watch the hot tiles."],

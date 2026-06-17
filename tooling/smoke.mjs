@@ -334,6 +334,51 @@ const wireRules = await page.evaluate(async () => {
   return { farCompatibleWired, sinkToSinkBlocked, vpceToRdsBlocked };
 });
 
+// Phase 5: typed connections. Edge type is stored + defaulted; PrivateLink
+// topology rule enforced; per-type hop cost feeds billing. (Still sandbox.)
+const typedConns = await page.evaluate(async () => {
+  const cn = await import("./src/services/connections.js");
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const gm = await import("./src/grid/grid.js");
+  const g = new gm.Grid(12, 12);
+  g.addEdge("1,1", "2,2");            // default type
+  g.addEdge("3,3", "4,4", "tgw");     // explicit type
+  return {
+    order: cn.CONN_ORDER.length,                       // 4
+    defaultType: g.getEdgeType("1,1", "2,2"),          // "vpc"
+    tgwType: g.getEdgeType("3,3", "4,4"),              // "tgw"
+    tgwHopCost: cn.getConn("tgw").hopCost,             // 2
+    vpcHopCost: cn.getConn("vpc").hopCost,             // 0
+    plinkExempt: cn.getConn("privatelink").crossAzExempt, // true
+    // PrivateLink needs exactly one sink end.
+    plinkEdgeToEdge: cn.connTypeAllows("privatelink", S.alb, S.cloudfront), // false
+    plinkEdgeToSink: cn.connTypeAllows("privatelink", S.alb, S.rds),        // true
+    plinkSinkToSink: cn.connTypeAllows("privatelink", S.rds, S.dynamodb),   // false
+    vpcAnyPair: cn.connTypeAllows("vpc", S.alb, S.cloudfront),              // true
+  };
+});
+
+// Scene wiring honours the active connection type + its topology rule.
+const sceneConn = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current; // sandbox
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  // PrivateLink between two non-sink tiles must be rejected.
+  s.connType = "privatelink";
+  s.palette.connType = "privatelink";
+  s.grid.place(S.alb, 5, 1);
+  s.grid.place(S.cloudfront, 7, 1);
+  s.wireFrom = { col: 5, row: 1 };
+  s._commitWire({ col: 7, row: 1 });
+  const plinkEdgeRejected = !s.grid.hasEdge("5,1", "7,1");
+  // PrivateLink to a sink is accepted and records the type.
+  s.grid.place(S.rds, 9, 8);
+  s.wireFrom = { col: 5, row: 1 };
+  s._commitWire({ col: 9, row: 8 });
+  const plinkToSinkOk = s.grid.hasEdge("5,1", "9,8");
+  const recordedType = s.grid.getEdgeType("5,1", "9,8");
+  return { plinkEdgeRejected, plinkToSinkOk, recordedType };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -351,6 +396,8 @@ console.log("awsFidelity:", JSON.stringify(awsFidelity));
 console.log("economyAudit:", JSON.stringify(economyAudit));
 console.log("depRouting:", JSON.stringify(depRouting));
 console.log("wireRules:", JSON.stringify(wireRules));
+console.log("typedConns:", JSON.stringify(typedConns));
+console.log("sceneConn:", JSON.stringify(sceneConn));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -423,6 +470,20 @@ if (economyAudit.replicaCost < 120) problems.push("Read Replica should cost ~a f
 if (economyAudit.multiAzRatio < 1.6) problems.push("RDS Multi-AZ should cost ~2× single-AZ RDS");
 if (economyAudit.crossAzPenalty < 8) problems.push("cross-AZ transfer penalty should be the full 8×");
 if (!economyAudit.plainTileNoXfer)  problems.push("plain tiles should carry no transfer mul (intra-AZ must be free)");
+// Phase 5: typed connections.
+if (typedConns.order !== 4)         problems.push("CONN_ORDER should have 4 types");
+if (typedConns.defaultType !== "vpc") problems.push("edge default type should be 'vpc'");
+if (typedConns.tgwType !== "tgw")   problems.push("explicit edge type not recorded");
+if (typedConns.tgwHopCost !== 2)    problems.push("TGW hopCost should be 2");
+if (typedConns.vpcHopCost !== 0)    problems.push("VPC link hopCost should be 0 (intra-AZ free)");
+if (!typedConns.plinkExempt)        problems.push("PrivateLink should be cross-AZ exempt");
+if (typedConns.plinkEdgeToEdge)     problems.push("PrivateLink edge<->edge should be rejected (needs a sink end)");
+if (!typedConns.plinkEdgeToSink)    problems.push("PrivateLink edge<->sink should be allowed");
+if (typedConns.plinkSinkToSink)     problems.push("PrivateLink sink<->sink should be rejected (needs exactly one sink end)");
+if (!typedConns.vpcAnyPair)         problems.push("VPC link should allow any canWire pair");
+if (!sceneConn.plinkEdgeRejected)   problems.push("scene: PrivateLink between non-sink tiles should be rejected");
+if (!sceneConn.plinkToSinkOk)       problems.push("scene: PrivateLink to a sink should commit");
+if (sceneConn.recordedType !== "privatelink") problems.push("scene: committed edge should record its connection type");
 
 console.log("phase4:", JSON.stringify(phase4));
 

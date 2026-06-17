@@ -9,6 +9,7 @@
 import { PALETTE, FONT } from "../theme.js";
 import { roundRect, drawService, lighten } from "../render/sprites.js";
 import { SERVICES, PALETTE_GROUPS } from "../services/catalog.js";
+import { CONN, CONN_ORDER, getConn, DEFAULT_CONN } from "../services/connections.js";
 
 const BTN   = 64;  // service button size
 const GAP   = 8;   // gap between service buttons
@@ -16,6 +17,7 @@ const PAD   = 12;  // bar padding
 const TOOL_W = 56; // wire / erase button width
 const TAB_H  = 26; // tab row height
 const TAB_GAP = 6;
+const CONN_H = 22; // connection-type picker row height
 
 export class BuildPalette {
   constructor() {
@@ -23,8 +25,10 @@ export class BuildPalette {
     this.wireMode   = false;
     this.eraseMode  = false;
     this.activeGroup = PALETTE_GROUPS[0].id; // current tab
+    this.connType   = DEFAULT_CONN; // active wire connection type (Phase 5: T5.1)
     this._rects     = [];  // service + tool hit rects (current frame)
     this._tabRects  = [];  // tab hit rects
+    this._connRects = [];  // connection-type chip hit rects
     this.hoverId    = null;
     this._t         = 0;
     this._barRect   = null; // full bar rect (for isOver)
@@ -34,6 +38,7 @@ export class BuildPalette {
   _layout(cssW, cssH) {
     this._rects = [];
     this._tabRects = [];
+    this._connRects = [];
 
     const grp = PALETTE_GROUPS.find((g) => g.activeGroup === this.activeGroup)
              || PALETTE_GROUPS.find((g) => g.id === this.activeGroup)
@@ -47,14 +52,26 @@ export class BuildPalette {
     const sepW = 12;
     const svcBlockW = svcIds.length * BTN + Math.max(0, svcIds.length - 1) * GAP;
     const totalW = toolBlockW + sepW + svcBlockW + PAD * 2;
-    const barH = TAB_H + GAP + BTN + PAD * 2;
+    const barH = CONN_H + GAP + TAB_H + GAP + BTN + PAD * 2;
 
     const barX = cssW / 2 - totalW / 2;
     const barY = cssH - barH - 14;
     this._barRect = { x: barX, y: barY, w: totalW, h: barH };
 
-    // Tab row
-    const tabY = barY + PAD;
+    // Connection-type picker row (spans the inner width, chips centred).
+    const connY = barY + PAD;
+    const innerW = totalW - PAD * 2;
+    const cN = CONN_ORDER.length;
+    const cGap = 6;
+    const cW = Math.floor((innerW - (cN - 1) * cGap) / cN);
+    let ccx = barX + PAD;
+    for (const id of CONN_ORDER) {
+      this._connRects.push({ id, x: ccx, y: connY, w: cW, h: CONN_H });
+      ccx += cW + cGap;
+    }
+
+    // Tab row (below the connection picker)
+    const tabY = connY + CONN_H + GAP;
     const tabRowStartX = barX + PAD + toolBlockW + sepW;
     let tx = tabRowStartX;
     // Distribute tabs evenly across the service block width
@@ -72,8 +89,8 @@ export class BuildPalette {
       tx += tabW + TAB_GAP;
     }
 
-    // Service + tool buttons row
-    const btnY = barY + PAD + TAB_H + GAP;
+    // Service + tool buttons row (below the tab row)
+    const btnY = tabY + TAB_H + GAP;
     let x = barX + PAD;
 
     // Tool buttons
@@ -108,7 +125,21 @@ export class BuildPalette {
     return null;
   }
 
+  _hitConn(mx, my) {
+    for (const r of this._connRects) {
+      if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) return r.id;
+    }
+    return null;
+  }
+
   handleClick(mx, my, budget) {
+    // Connection-type chip click? (does not disturb the armed tool/service.)
+    const connId = this._hitConn(mx, my);
+    if (connId) {
+      this.connType = connId;
+      return true;
+    }
+
     // Tab click?
     const tabId = this._hitTab(mx, my);
     if (tabId) {
@@ -150,7 +181,8 @@ export class BuildPalette {
 
   updateHover(mx, my, dt) {
     this._t += dt;
-    this.hoverId = this._hit(mx, my) || this._hitTab(mx, my);
+    const conn = this._hitConn(mx, my);
+    this.hoverId = conn ? "__conn:" + conn : (this._hit(mx, my) || this._hitTab(mx, my));
   }
 
   isOver(mx, my) {
@@ -171,6 +203,27 @@ export class BuildPalette {
     ctx.lineWidth = 1;
     roundRect(ctx, bar.x, bar.y, bar.w, bar.h, 14);
     ctx.stroke();
+
+    // Connection-type picker chips
+    for (const cr of this._connRects) {
+      const conn = getConn(cr.id);
+      const active = cr.id === this.connType;
+      const over = this.hoverId === "__conn:" + cr.id && !active;
+      ctx.fillStyle = active ? conn.color : over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+      roundRect(ctx, cr.x, cr.y, cr.w, cr.h, 6);
+      ctx.fill();
+      if (active) {
+        ctx.strokeStyle = lighten(conn.color, 0.3);
+        ctx.lineWidth = 1.5;
+        roundRect(ctx, cr.x, cr.y, cr.w, cr.h, 6);
+        ctx.stroke();
+      }
+      ctx.font = "700 10px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = active ? "#0c0f14" : conn.color;
+      ctx.fillText(conn.short.toUpperCase(), cr.x + cr.w / 2, cr.y + cr.h / 2);
+    }
 
     // Category tabs
     for (const tr of this._tabRects) {
@@ -253,10 +306,14 @@ export class BuildPalette {
 
     // Tooltip for hovered service (above the bar)
     const hov = this.hoverId;
-    if (hov && !hov.startsWith("__") && SERVICES[hov]) {
+    if (hov && hov.startsWith("__conn:")) {
+      const conn = getConn(hov.slice(7));
+      const tipLines = conn.examTip ? ["", "📚 Exam:", ...wrap(conn.examTip, 44)] : [];
+      this._panel(ctx, bar, conn.label, [...wrap(conn.blurb, 44), ...tipLines], conn.color);
+    } else if (hov && !hov.startsWith("__") && SERVICES[hov]) {
       this._tooltip(ctx, SERVICES[hov], bar);
     } else if (hov === "__wire") {
-      this._toolTip(ctx, bar, "Wire tool", "Drag between two tiles to lay a wire. Gate (Route 53) can wire to any AZ. Right-click a wire to cut it.");
+      this._toolTip(ctx, bar, "Wire tool", "Drag between two services to lay a wire — any distance. Pick the connection type in the row above (or press C to cycle). Right-click a wire to cut it.");
     } else if (hov === "__erase") {
       this._toolTip(ctx, bar, "Erase tool", "Click a building to remove it (refunds its cost). Gate tiles cannot be removed.");
     }

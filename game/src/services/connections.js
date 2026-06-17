@@ -18,8 +18,12 @@
 // Gateway endpoint already exists as a placeable building, and Direct Connect
 // needs an on-prem/partner node the catalog doesn't model yet — deferred.)
 //
-// `transferMul` multiplies the per-hop data-transfer charge (see billing). The
-// per-pair legality `connTypeAllows` layers on top of the service-level canWire.
+// `hopCost` is an ADDITIVE per-hop transfer charge (in base-hop units) the type
+// always carries — its own per-GB processing — since plain intra-AZ traffic is
+// free (0). VPC/Peering add nothing intra-AZ; TGW/PrivateLink carry a standing
+// per-GB fee. `crossAzExempt` skips the cross-AZ penalty (PrivateLink keeps
+// traffic on the private network). The per-pair legality `connTypeAllows`
+// layers on top of the service-level canWire.
 
 import { SINK_ROLES } from "./catalog.js";
 
@@ -29,7 +33,7 @@ export const CONN = {
     label: "VPC Link",
     short: "VPC",
     color: "#4cc9f0",
-    transferMul: 1,
+    hopCost: 0,
     crossAzExempt: false,
     blurb:
       "Default same-VPC link. Intra-AZ traffic is free; crossing an AZ band costs 8× per hop. Keep chatty tiers in one AZ; pay for cross-AZ only where you need resilience.",
@@ -41,7 +45,7 @@ export const CONN = {
     label: "VPC Peering",
     short: "Peer",
     color: "#52b788",
-    transferMul: 1,
+    hopCost: 0,
     crossAzExempt: false,
     blurb:
       "1:1 VPC Peering. Non-transitive — peering A↔B and B↔C does NOT give A↔C. No hourly fee; you pay only cross-AZ/region data transfer.",
@@ -53,7 +57,7 @@ export const CONN = {
     label: "Transit Gateway",
     short: "TGW",
     color: "#b5179e",
-    transferMul: 1.6,
+    hopCost: 2,
     crossAzExempt: false,
     blurb:
       "Transit Gateway — hub-and-spoke router with transitive routing across many VPCs. Scales to thousands of attachments; adds per-GB data processing on top of transfer.",
@@ -65,7 +69,7 @@ export const CONN = {
     label: "PrivateLink",
     short: "PLink",
     color: "#4361ee",
-    transferMul: 1.3,
+    hopCost: 1.3,
     crossAzExempt: true,
     requiresSinkEnd: true,
     blurb:

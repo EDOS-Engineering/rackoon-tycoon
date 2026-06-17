@@ -7,6 +7,7 @@ import { PALETTE } from "../theme.js";
 import { Grid, TILE } from "../grid/grid.js";
 import { drawService, roundRect } from "./sprites.js";
 import { AZ_COUNT, zoneColumnRange, zoneOfColumn, AZ_LABELS } from "../waves/events.js";
+import { getConn } from "../services/connections.js";
 
 // Draw the dark workshop floor + grid lines, only across the grid bounds.
 export function drawFloor(ctx, grid, time) {
@@ -59,22 +60,25 @@ export function drawWires(ctx, grid, time) {
   });
   ctx.stroke();
 
-  // Solid core.
-  ctx.strokeStyle = PALETTE.wire;
+  // Solid core, coloured by connection type (Phase 5: T5.1). Each edge strokes
+  // individually so the type's colour reads at a glance.
   ctx.lineWidth = 4;
-  ctx.beginPath();
-  grid.forEachEdge((c1, r1, c2, r2) => {
+  grid.forEachEdge((c1, r1, c2, r2, type) => {
+    ctx.strokeStyle = getConn(type).color;
+    ctx.beginPath();
     line(ctx, c1, r1, c2, r2);
+    ctx.stroke();
   });
-  ctx.stroke();
 
-  // Cross-AZ overlay: wires whose ends sit in different AZ bands carry an
-  // inter-AZ data-transfer cost — tint them amber so the price is visible.
+  // Cross-AZ overlay: wires whose ends sit in different AZ bands carry the 8×
+  // inter-AZ penalty — tint them amber so the price is visible. PrivateLink keeps
+  // traffic private (crossAzExempt), so it pays nothing and is not tinted.
   ctx.strokeStyle = "rgba(255,179,71,0.7)";
   ctx.lineWidth = 4;
   ctx.beginPath();
-  grid.forEachEdge((c1, r1, c2, r2) => {
-    if (zoneOfColumn(c1, grid.cols) !== zoneOfColumn(c2, grid.cols)) {
+  grid.forEachEdge((c1, r1, c2, r2, type) => {
+    if (!getConn(type).crossAzExempt &&
+        zoneOfColumn(c1, grid.cols) !== zoneOfColumn(c2, grid.cols)) {
       line(ctx, c1, r1, c2, r2);
     }
   });

@@ -40,6 +40,7 @@ export class Grid {
     this.rows = rows;
     this.buildings = new Map(); // key "c,r" -> Building
     this.edges = new Set(); // undirected edge keys "c1,r1|c2,r2" (sorted)
+    this.edgeType = new Map(); // edgeKey -> connection type id (Phase 5: T5.1)
     this.adj = new Map(); // "c,r" -> Set of neighbor keys "c,r"
   }
 
@@ -111,19 +112,28 @@ export class Grid {
     return dc <= 1 && dr <= 1 && dc + dr > 0;
   }
 
-  addEdge(aKey, bKey) {
+  // type defaults to "vpc" (the plain same-VPC link). grid stays import-free, so
+  // the default is the literal string rather than a connections.js reference.
+  addEdge(aKey, bKey, type = "vpc") {
     const ek = Grid.edgeKey(aKey, bKey);
     if (this.edges.has(ek)) return false;
     this.edges.add(ek);
+    this.edgeType.set(ek, type);
     this._adjSet(aKey).add(bKey);
     this._adjSet(bKey).add(aKey);
     return true;
+  }
+
+  // Connection type of an edge ("vpc" if unset / no edge).
+  getEdgeType(aKey, bKey) {
+    return this.edgeType.get(Grid.edgeKey(aKey, bKey)) || "vpc";
   }
 
   _removeEdgeByKeys(aKey, bKey) {
     const ek = Grid.edgeKey(aKey, bKey);
     if (!this.edges.has(ek)) return false;
     this.edges.delete(ek);
+    this.edgeType.delete(ek);
     const a = this.adj.get(aKey);
     const b = this.adj.get(bKey);
     if (a) a.delete(bKey);
@@ -148,13 +158,13 @@ export class Grid {
     return this.adj.get(k) || EMPTY;
   }
 
-  // Iterate all edges as [c1,r1,c2,r2] for rendering.
+  // Iterate all edges as [c1,r1,c2,r2,type] for rendering.
   forEachEdge(fn) {
     for (const ek of this.edges) {
       const bar = ek.indexOf("|");
       const [c1, r1] = Grid.parseKey(ek.slice(0, bar));
       const [c2, r2] = Grid.parseKey(ek.slice(bar + 1));
-      fn(c1, r1, c2, r2);
+      fn(c1, r1, c2, r2, this.edgeType.get(ek) || "vpc");
     }
   }
 }
