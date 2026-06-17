@@ -169,8 +169,17 @@ export class Simulation {
       const rate = this.level.spawnRate * baseMul * spikeMul;
       this._spawnAcc += dt * rate;
       // Sim-depth: during a TLS cert expiry the edge rejects a fraction of NEW
-      // connections (a failed handshake) — they never become a routed packet.
-      const certDrop = this.events.edgeDropRate();
+      // connections (a failed handshake) — they never become a routed packet. An
+      // ACM tile on the board absorbs that drop (certMitigation): managed
+      // auto-renewal means the cert never lapses. Presence-based, like WAF/Shield.
+      let certDrop = this.events.edgeDropRate();
+      if (certDrop > 0) {
+        for (const b of this.grid.buildings.values()) {
+          if (!b.disabled && b.service.certMitigation) {
+            certDrop *= 1 - b.service.certMitigation;
+          }
+        }
+      }
       while (this._spawnAcc >= 1) {
         this._spawnAcc -= 1;
         if (certDrop > 0 && this._rng() < certDrop) {
