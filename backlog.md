@@ -10,6 +10,7 @@
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 - **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
 - **2026-06-17 — Phase 7 kickoff: architecture review + R2 (seedable RNG + headless harness).** Ran an architecture review (research subagent + `/improve-codebase-architecture`): the helper sim modules are clean seams but the simulation that composes them lives inside the 1616-line `LevelScene`; no headless sim; unseeded sim-path RNG. Recorded the architecture-first plan (R1–R6) + order + locked design decisions (time-compressed clock; both win models — milestone scenarios + endless free-run). Shipped **R2** (the first, decision-independent step): new `sim/rng.js` (mulberry32 seedable PRNG) threaded through the two sim-path randoms (`EventDirector` AZ-zone pick, `LoadModel.shouldDrop`), defaulting to `Math.random` for back-compat; new `tooling/headless.mjs` runs the sim modules under Node with no canvas and asserts seeded determinism. Removed the Sandbox "Cash Out" button (overlapped the reinvest slider, no goal to wrap up; Esc exits). → `sim/rng.js`, `waves/{events,load}.js`, `scenes/levelScene.js`, `tooling/headless.mjs`. headless 0 problems; browser smoke 0/0.
+- **2026-06-17 — Phase 7 R1 + R3 shipped; Help overlay fixed.** **R1:** lifted the simulation out of the 1600-line `LevelScene` into a pure, headless, deterministic `sim/simulation.js` (`step(dt)` + `recomputeRoute()`; side-effects via a drained `emitted` queue; scene delegates state through accessors so the renderer/input are untouched) — a no-behaviour-change lift, with `tooling/headless.mjs` now fast-running a real `Simulation` to a seeded, byte-identical win. **R3:** new `waves/demand.js` `DemandModel.rateAt(t)` — a continuous living-economy curve (diurnal + weekday/weekend + seasonal + compounding growth), wired as the spawn-rate source when a level defines `demand{}`; sandbox now breathes/grows; HUD chip shows `Day N · HH:00 · phase`. **Help fix:** the legend's fixed 48px rows overlapped multi-line descriptions — now each row sizes to its wrapped line count and the card to the total. → `sim/simulation.js`, `waves/demand.js`, `scenes/levelScene.js`, `levels/levels.js`, `tooling/{headless,smoke}.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — UI polish + roadmap Epochs.** Fixed the palette tab overflow (bar width tracked the active group's service row, so narrow groups let the 6-tab row spill — SECURITY bled off; now the content area is `max(serviceRow, tabRow)` with fixed-width tabs, stable bar). Collapsed the title's 19-mission grid into a styled **Campaign dropdown** (two readable columns, modal). Perf: cached the building body gradient + color-mix in the render hot path. Added two roadmap Epochs to this backlog: **Phase 7** (living simulation — time-varying demand, compounding economy, richer incident deck, long-form "company" mode) and **Phase 8** (grand pivot — fork into a visual AWS SDK client, read-only first, hard security/dependency gates). → `palette.js`, `titleScene.js`, `sprites.js`, READMEs, `backlog.md`. smoke: 0/0, 60fps.
 - **2026-06-17 — T6.3 Secret Keeper (Secrets Manager).** 19th level: broker DB credentials through a new `secrets_manager` tile (Security group) instead of hard-coding them — `pathContainsAll:["secrets_manager"]`. Inserted before the DR finale; Secure domain now has 4 boss levels. → `catalog.js`, `levels.js`, `smoke.mjs`. smoke: 19 levels, 0/0.
 - **2026-06-17 — Title-screen UI cleanup + T6.6 multi-region DR.** Title: replaced the runaway single-row level strip (17 chips × 128px blew the screen width) with a compact wrapped grid of numbered chips (4–9 auto-columns, number + short name + stars), the hovered mission's full name/subtitle on a reserved line; tightened logo/wordmark spacing. T6.6 "Across the Region" (18th level): new `region_failure` event downs the primary region's AZ bands — Multi-AZ can't save it (single-region); only the global Route 53 gate + a DR-region replica survive. Resilient domain now has 4 boss levels. → `titleScene.js`, `waves/events.js`, `levelScene.js`, `levels.js`, `smoke.mjs`. smoke: 18 levels, 0 errors, 0 problems.
@@ -434,9 +435,16 @@ the data-driven catalog/levels pattern):
   now fast-runs a real `Simulation` (first_light): same seed → byte-identical run to a
   win with an accruing bill. Pure lift, no behaviour change. headless 0 problems; browser
   smoke 0/0. → `sim/simulation.js`, `scenes/levelScene.js`, `tooling/{headless,smoke}.mjs`.
-- **R3 — `DemandModel` (`waves/demand.js`)** — `rateAt(t)` as a continuous signal
-  (base + diurnal + weekday/weekend + seasonality + `growth^t`). `WaveScheduler`
-  becomes a thin adapter; a level supplies `waves[]` (old) **or** a `demand{}` spec. → **T7.1**
+- **R3 — `DemandModel` (`waves/demand.js`). ✅ DONE (2026-06-17).** Pure, deterministic
+  `rateAt(t)` = base × diurnal (cosine peaking at `peakHour`) × weekday/weekend ×
+  seasonal sine × compounding `growth^days` (capped, floored). The `Simulation` carries
+  a sim clock (`simTime`) and uses the curve for the spawn-rate multiplier when a level
+  defines `demand{}`, else falls back to the legacy `WaveScheduler.multiplier()`; the HUD
+  wave chip shows the living-economy phase (`Day N · HH:00 · weekday peak`). Sandbox now
+  ships a `demand{}` spec (8s day, mid-afternoon peak, quiet weekends, ~5%/day growth).
+  Headless asserts curve shape (peak≫trough, growth over 10 days, weekend<weekday) + a
+  sandbox run where a later full-day window outpaces an early one. headless 0; smoke 0/0.
+  → `waves/demand.js`, `sim/simulation.js`, `scenes/levelScene.js`, `levels/levels.js`, `tooling/headless.mjs`.
 - **R4 — `Economy` ledger (`economy/economy.js`)** — move budget/revenue/lost +
   all mutation behind explicit ops (`chargeBill/earn/penalize/reinvest/applyGrowth/
   churn`); concentrates the scattered writes; home for compounding growth + churn. → **T7.2**
@@ -456,13 +464,21 @@ the data-driven catalog/levels pattern):
   "free-run" company** mode (run until bankruptcy/quit, scored by peak). Player picks
   per mission. Shapes R6 (`mode: scenario|freerun`, milestone-or-peak `evaluate`).
 
-**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → **(R3, R4, R5 in parallel — next)** → R6; T7.6 realism (latency SLOs,
+**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → **(R4, R5 — next)** → R6; T7.6 realism (latency SLOs,
 scaling-lag/warm-up in `LoadModel`, blast radius via the deck, RPO/RTO) rides on the
 stable seams. **Single best first step: R2.** Each step lands runnable + smoke-checked,
 and steps 3–6 each ship ≥1 headless balancing assertion.
 
 > **End of Phase 7:** levels feel like operating a real, growing AWS system over time
 > — demand breathes, money compounds, and the unexpected tests the architecture.
+
+**Polish / icebox (visual, not blocking the R-series):**
+- **Title-screen living backdrop.** Replace the current floating points with a faded,
+  opaque **mini-architecture** behind the title: real AWS service node icons connected by
+  the game's typed network/edge wires (VPC / Peering / TGW / PrivateLink, each styled as
+  in-game), with packets flowing along the wires and nodes gently bobbing — the title
+  screen previews the actual game world. Reuse `render/sprites.js` node art + the wire
+  renderer at low alpha; a tiny ambient packet loop (no sim, pure decoration). _(requested 2026-06-17)_
 
 ### 🟣 PHASE 8 — Grand pivot: fork into a visual AWS SDK client
 

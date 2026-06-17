@@ -751,10 +751,23 @@ export const LEVELS = {
     goalRequests: 0,
     next: null,
     waves: [{ name: "Endless flow", duration: 99999, rate: 1.0 }],
+    // R3 (T7.1): a living-economy demand curve. Traffic breathes over a ~8s day
+    // (peaking mid-afternoon), eases on weekends, drifts with a 4-week season, and
+    // the customer base compounds ~5%/day — so a long sandbox run grows on you.
+    demand: {
+      dayLength: 8,
+      diurnalAmp: 0.6,
+      peakHour: 14,
+      weekendMul: 0.7,
+      seasonAmp: 0.18,
+      seasonDays: 28,
+      growthPerDay: 0.05,
+      growthCap: 6,
+    },
     events: [],
     slaMaxDropRate: 0.55,
     intro:
-      "Sandbox mode — no goals, no time limit, no loss conditions. Build any architecture you like and watch the traffic flow.\n\nEvery service is available. Experiment freely: try NAT vs VPC Endpoint cost, watch Shield absorb spikes, test Aurora SV2 auto-scaling under load. Use the reinvestment slider (top-right) to feed revenue back into your budget.\n\nPress Esc to return to the menu. The AWS bill still runs, so you'll see how different architectures affect your burn rate — experiment!",
+      "Sandbox mode — no goals, no time limit, no loss conditions. Build any architecture you like and watch the traffic flow.\n\nThis board runs a living economy: traffic rises and falls over each compressed day, dips on weekends, and your customer base compounds over time — so demand keeps climbing the longer you run. Watch the day/phase chip (top-right).\n\nEvery service is available. Experiment freely: try NAT vs VPC Endpoint cost, watch Shield absorb spikes, test Aurora SV2 auto-scaling under load. Use the reinvestment slider (top-right) to feed revenue back into your budget.\n\nPress Esc to return to the menu. The AWS bill still runs, so you'll see how different architectures affect your burn rate — experiment!",
     examTip:
       "Use this mode to explore service combinations without pressure. Build the same path with NAT Gateway vs VPC Endpoint and compare burn rates, or stress-test Aurora SV2's auto-scaling by wiring many packets through it.",
   },

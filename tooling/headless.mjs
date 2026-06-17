@@ -14,6 +14,7 @@ import { WaveScheduler } from "../game/src/waves/scheduler.js";
 import { Grid } from "../game/src/grid/grid.js";
 import { SERVICES } from "../game/src/services/catalog.js";
 import { Simulation } from "../game/src/sim/simulation.js";
+import { DemandModel } from "../game/src/waves/demand.js";
 import { getLevel } from "../game/src/levels/levels.js";
 
 const problems = [];
@@ -121,10 +122,73 @@ if (JSON.stringify(simA) !== JSON.stringify(simB))
 if (!(simA.success > 0)) problems.push("a legal route should route guests over a headless run");
 if (!(simA.bill > 0)) problems.push("Simulation should accrue a bill over a headless run");
 
+// 5. DemandModel (Phase 7 R3): the continuous demand curve has the shape a
+//    living economy needs — a daily peak, quieter weekends, and a customer base
+//    that compounds over time. Pure + deterministic (function of t + spec).
+const dm = new DemandModel({
+  dayLength: 8, diurnalAmp: 0.6, peakHour: 14, weekendMul: 0.7,
+  seasonAmp: 0, growthPerDay: 0.05, growthCap: 6,
+});
+const hourSecs = (h, day = 0) => (day + h / 24) * 8; // sim seconds at hour h of `day`
+const peakD0 = dm.rateAt(hourSecs(14, 0));   // Mon afternoon (day 0)
+const troughD0 = dm.rateAt(hourSecs(2, 0));   // Mon pre-dawn
+const peakD10 = dm.rateAt(hourSecs(14, 10));  // 10 days later, same hour (weekday: day10%7=3)
+const satPeak = dm.rateAt(hourSecs(14, 5));    // day 5 = Saturday afternoon
+const friPeak = dm.rateAt(hourSecs(14, 4));    // day 4 = Friday afternoon
+if (!(peakD0 > troughD0 * 1.5)) problems.push("demand: daily peak should clearly exceed the overnight trough");
+if (!(peakD10 > peakD0 * 1.3)) problems.push("demand: growth should compound the base over 10 days");
+if (!(satPeak < friPeak)) problems.push("demand: a weekend afternoon should be quieter than a weekday afternoon");
+if (!(dm.rateAt(0) >= 0.1)) problems.push("demand: rate should be floored above zero");
+
+// 6. A demand-driven level (sandbox) fast-runs through the composed Simulation:
+//    same seed replays identically, guests route, and demand late in the run
+//    outpaces early (the growth curve shows up in throughput).
+function runWindow(seed) {
+  const level = getLevel("sandbox");
+  const grid = new Grid(level.cols, level.rows);
+  const gateKeys = [];
+  for (const gt of level.gates) {
+    grid.place(SERVICES.route53, gt.col, gt.row);
+    gateKeys.push(Grid.key(gt.col, gt.row));
+  }
+  const [gc, gr] = Grid.parseKey(gateKeys[0]);
+  grid.place(SERVICES.alb, gc + 1, gr);
+  grid.place(SERVICES.ec2, gc + 2, gr);
+  grid.place(SERVICES.rds, gc + 3, gr);
+  grid.addEdge(Grid.key(gc, gr), Grid.key(gc + 1, gr));
+  grid.addEdge(Grid.key(gc + 1, gr), Grid.key(gc + 2, gr));
+  grid.addEdge(Grid.key(gc + 2, gr), Grid.key(gc + 3, gr));
+  const sim = new Simulation({ level, grid, gateKeys, rng: makeRng(seed), budget: level.budget });
+  // dayLength is 8s, so a 60*8-step window spans exactly one in-game day — which
+  // averages out the diurnal swing and isolates the compounding growth. Compare
+  // guests routed in an early full-day window vs a later one (~5 days on).
+  const oneDay = 60 * 8;
+  const stepN = (n) => { for (let i = 0; i < n; i++) { sim.recomputeRoute(); sim.step(1 / 60); sim.drainEmitted(); } };
+  const earlyStart = sim.success;
+  stepN(oneDay);                 // day 0
+  const earlyRouted = sim.success - earlyStart;
+  stepN(oneDay * 5);             // skip ahead ~5 in-game days into the growth curve
+  const lateStart = sim.success;
+  stepN(oneDay);                 // an equal one-day window, now later
+  const lateRouted = sim.success - lateStart;
+  return { sim, earlyRouted, lateRouted };
+}
+const sbA = runWindow(2024);
+const sbB = runWindow(2024);
+if (!(sbA.sim.success > 0)) problems.push("sandbox demand run should route guests");
+if (sbA.sim.success !== sbB.sim.success) problems.push("sandbox demand run must be deterministic for a fixed seed");
+if (!(sbA.lateRouted > sbA.earlyRouted)) problems.push("demand growth: a later window should route more guests than an early one");
+
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
 console.log("headless run billTotal:", bill.totalSpent.toFixed(2));
 console.log("sim(first_light,4242):", JSON.stringify(simA));
 console.log("sim deterministic:", JSON.stringify(simA) === JSON.stringify(simB));
+console.log("demand peak/trough(d0):", peakD0.toFixed(2) + "/" + troughD0.toFixed(2),
+  " peak d10:", peakD10.toFixed(2), " fri/sat:", friPeak.toFixed(2) + "/" + satPeak.toFixed(2));
+console.log("sandbox demand run:", JSON.stringify({
+  success: sbA.sim.success, earlyRouted: sbA.earlyRouted, lateRouted: sbA.lateRouted,
+  label: sbA.sim.demand.label(sbA.sim.simTime),
+}));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

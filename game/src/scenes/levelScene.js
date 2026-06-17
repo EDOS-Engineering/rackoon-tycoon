@@ -666,8 +666,13 @@ export class LevelScene extends Scene {
     // World-space building tooltip (drawn in screen space at cursor).
     this._renderBuildingTooltip(ctx);
 
-    // HUD + palette (screen space).
+    // HUD + palette (screen space). On a demand-driven level the wave chip shows
+    // the living-economy phase (day / hour / peak) instead of a scripted phase.
     const cur = this.waves.current();
+    const dem = this.sim.demand;
+    const wave = dem
+      ? { phaseName: dem.label(this.sim.simTime), progress: dem.dayFraction(this.sim.simTime) }
+      : { phaseName: cur.phase.name, progress: this.waves.progress() };
     drawHUD(ctx, W, H, {
       budget: this.budget,
       startBudget: this.level.budget,
@@ -680,10 +685,7 @@ export class LevelScene extends Scene {
       billTotal: this.bill.totalSpent,
       burnRate: this.bill.burnRate,
       goalRequests: this.level.goalRequests,
-      wave: {
-        phaseName: cur.phase.name,
-        progress: this.waves.progress(),
-      },
+      wave,
     });
     this.palette.render(ctx, W, H, this.budget);
 

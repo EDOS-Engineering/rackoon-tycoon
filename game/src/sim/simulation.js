@@ -26,6 +26,7 @@ import { getConn } from "../services/connections.js";
 import { SINK_ROLES, ROLE } from "../services/catalog.js";
 import { BillMeter, BILL } from "../economy/billing.js";
 import { WaveScheduler } from "../waves/scheduler.js";
+import { DemandModel } from "../waves/demand.js";
 import { LoadModel } from "../waves/load.js";
 import { EventDirector, zoneOfColumn } from "../waves/events.js";
 import { evaluate, OUTCOME } from "../economy/scoring.js";
@@ -47,9 +48,18 @@ export class Simulation {
     this.success = 0;
     this.failed = 0;
 
+    // Sim clock (seconds of compressed sim time elapsed since the shift began).
+    // Drives the continuous demand curve; advanced in step().
+    this.simTime = 0;
+
     // Sim systems (all driven by the shared seedable rng).
     this.bill = new BillMeter();
     this.waves = new WaveScheduler(level.waves);
+    // R3 (T7.1): a level may supply a continuous `demand{}` spec for a living
+    // economy (diurnal/weekly/seasonal + compounding growth). When present it is
+    // the source of truth for the spawn-rate multiplier; the WaveScheduler stays
+    // for legacy `waves[]` levels and for phase/progress + win bookkeeping.
+    this.demand = level.demand ? new DemandModel(level.demand) : null;
     this.events = new EventDirector(level.events, level.cols, rng);
     this.loadModel = new LoadModel(rng);
 
@@ -101,9 +111,10 @@ export class Simulation {
   // the current wave/spike rate, recompute per-building load, move packets, then
   // evaluate the outcome. Emits sounds/floats; never touches render or audio.
   step(dt) {
+    this.simTime += dt;
     this._tickSystems(dt);
 
-    // Spawn loop (rate scaled by the current wave + any traffic spike).
+    // Spawn loop (rate scaled by the demand curve + any traffic spike).
     if (this.routeOk) {
       // WAF / Shield tiles on the board reduce the effective spike multiplier.
       // Each attackMitigation value absorbs that fraction of the spike excess.
@@ -115,7 +126,10 @@ export class Simulation {
           }
         }
       }
-      const rate = this.level.spawnRate * this.waves.multiplier() * spikeMul;
+      // Continuous demand curve (R3) when the level defines one, else the legacy
+      // scripted wave multiplier.
+      const baseMul = this.demand ? this.demand.rateAt(this.simTime) : this.waves.multiplier();
+      const rate = this.level.spawnRate * baseMul * spikeMul;
       this._spawnAcc += dt * rate;
       while (this._spawnAcc >= 1) {
         this._spawnAcc -= 1;
