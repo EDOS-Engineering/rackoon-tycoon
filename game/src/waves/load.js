@@ -25,8 +25,10 @@ const QUEUE_DRAIN = 2.2;
 const HEAT_EASE = 6;
 
 export class LoadModel {
-  constructor() {
+  // `rng` is the seedable sim RNG (defaults to Math.random for back-compat).
+  constructor(rng = Math.random) {
     this._demand = new Map(); // building key -> concurrent packet count
+    this._rng = rng;
   }
 
   reset() {
@@ -108,7 +110,7 @@ export class LoadModel {
     if (!b || !b.dropping) return false;
     const over = (b.queue - QUEUE_TOLERANCE) / QUEUE_TOLERANCE; // 0..~1.5
     const pDrop = Math.min(0.85, Math.max(0.05, over));
-    return Math.random() < pDrop;
+    return this._rng() < pDrop;
   }
 }
 

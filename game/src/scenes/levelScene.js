@@ -41,6 +41,7 @@ import {
   AZ_COUNT,
 } from "../waves/events.js";
 import { evaluate, score, azSpread, OUTCOME } from "../economy/scoring.js";
+import { makeRng } from "../sim/rng.js";
 import { SINK_ROLES, ROLE } from "../services/catalog.js";
 import { getDifficulty } from "../save/difficulty.js";
 
@@ -63,10 +64,13 @@ export class LevelScene extends Scene {
     this.failed = 0;
 
     // ---- Phase 2 systems ----
+    // Per-run seedable RNG drives all sim-path randomness (incident zones, drop
+    // decisions) so a run is reproducible and the headless harness is deterministic.
+    this._rng = makeRng();
     this.bill = new BillMeter();
     this.waves = new WaveScheduler(level.waves);
-    this.events = new EventDirector(level.events, level.cols);
-    this.loadModel = new LoadModel();
+    this.events = new EventDirector(level.events, level.cols, this._rng);
+    this.loadModel = new LoadModel(this._rng);
     this.outcome = OUTCOME.PLAYING; // PLAYING | WIN | LOSE
     this._endTimer = 0; // brief pause before flipping to results
     this._eventsSurvived = 0; // events whose window we fully cleared while alive

@@ -54,8 +54,10 @@ const DEFAULT_EVENTS = [
 ];
 
 export class EventDirector {
-  constructor(events, cols) {
+  // `rng` is the seedable sim RNG (defaults to Math.random for back-compat).
+  constructor(events, cols, rng = Math.random) {
     this.cols = cols;
+    this._rng = rng;
     // Clone events and assign random zones for AZ failures whose zone was not
     // explicitly pinned. Multiple AZ failures in the same level get distinct
     // zones so the player always faces real multi-AZ pressure.
@@ -68,8 +70,8 @@ export class EventDirector {
           if (!usedZones.has(z)) avail.push(z);
         }
         ev.zone = avail.length > 0
-          ? avail[Math.floor(Math.random() * avail.length)]
-          : Math.floor(Math.random() * AZ_COUNT);
+          ? avail[Math.floor(this._rng() * avail.length)]
+          : Math.floor(this._rng() * AZ_COUNT);
       }
       if (ev.kind === EVENT_KIND.AZ_FAILURE) usedZones.add(ev.zone);
       // A region failure downs a set of AZ bands (the "primary region"). Default:
