@@ -4,7 +4,9 @@
 
 import { Scene } from "../engine/scene.js";
 import { PALETTE, FONT, BRAND } from "../theme.js";
-import { drawRaccoon, roundRect } from "../render/sprites.js";
+import { drawRaccoon, drawService, roundRect } from "../render/sprites.js";
+import { SERVICES } from "../services/catalog.js";
+import { getConn } from "../services/connections.js";
 import { load } from "../save/storage.js";
 import { LEVEL_ORDER, FIRST_LEVEL, getLevel } from "../levels/levels.js";
 import { isUnlocked, bestFor, totalStars, resetProgress } from "../save/progress.js";
@@ -21,17 +23,7 @@ export class TitleScene extends Scene {
     for (const id of LEVEL_ORDER) {
       if (isUnlocked(id, FIRST_LEVEL)) this.continueId = id;
     }
-    // Floating background sparks (decorative "guests").
-    this.sparks = [];
-    for (let i = 0; i < 36; i++) {
-      this.sparks.push({
-        x: Math.random(),
-        y: Math.random(),
-        s: 0.4 + Math.random() * 0.9,
-        spd: 0.01 + Math.random() * 0.03,
-        ph: Math.random() * Math.PI * 2,
-      });
-    }
+    this._buildBackdrop();
     this._btn = { x: 0, y: 0, w: 0, h: 0 };
     this._levelBtns = []; // filled during render
     this._diffBtns = []; // difficulty chips, filled during render
@@ -50,14 +42,120 @@ export class TitleScene extends Scene {
     return i.x >= r.x && i.x <= r.x + r.w && i.y >= r.y && i.y <= r.y + r.h;
   }
 
+  // Build a fixed mini-architecture for the backdrop: a handful of real service
+  // nodes (scattered around the edges, clear of the centred logo + buttons) and
+  // typed wires between them showcasing all four connection types. Packets are
+  // derived from `this.t` at render time, so no per-frame state to advance.
+  _buildBackdrop() {
+    const S = SERVICES;
+    // [serviceId, xNorm, yNorm] — positions hug the periphery so the title,
+    // wordmark, and button stack in the centre column stay legible.
+    const defs = [
+      ["route53", 0.11, 0.26],
+      ["s3", 0.30, 0.13],
+      ["dynamodb", 0.70, 0.12],
+      ["cache", 0.89, 0.28],
+      ["alb", 0.16, 0.66],
+      ["rds", 0.90, 0.64],
+      ["ec2", 0.40, 0.9],
+      ["lambda", 0.74, 0.88],
+    ];
+    this.nodes = defs
+      .filter(([id]) => S[id])
+      .map(([id, x, y], i) => ({ svc: S[id], x, y, ph: i * 1.7 }));
+    const idx = {};
+    this.nodes.forEach((n, i) => (idx[n.svc.id] = i));
+    // [fromId, toId, connType] — every CONN type appears at least once.
+    const edgeDefs = [
+      ["route53", "s3", "peering"],
+      ["route53", "alb", "vpc"],
+      ["alb", "ec2", "vpc"],
+      ["ec2", "rds", "peering"],
+      ["ec2", "cache", "vpc"],
+      ["cache", "rds", "privatelink"],
+      ["s3", "dynamodb", "tgw"],
+      ["dynamodb", "cache", "tgw"],
+      ["lambda", "rds", "privatelink"],
+    ];
+    this.edges = edgeDefs
+      .filter(([a, b]) => idx[a] != null && idx[b] != null)
+      .map(([a, b, type], i) => ({
+        a: idx[a],
+        b: idx[b],
+        type,
+        // A couple of packets per wire at staggered offsets + gentle speeds.
+        packets: [
+          { off: (i * 0.37) % 1, spd: 0.16 + (i % 3) * 0.03 },
+          { off: (i * 0.37 + 0.5) % 1, spd: 0.16 + (i % 3) * 0.03 },
+        ],
+      }));
+  }
+
+  // Draw the faded living-architecture backdrop (wires → packets → nodes).
+  _renderBackdrop(ctx, W, H) {
+    if (!this.nodes) return;
+    const nx = (n) => n.x * W;
+    const ny = (n) => n.y * H + Math.sin(this.t * 0.7 + n.ph) * 6;
+
+    ctx.save();
+    ctx.lineCap = "round";
+
+    // Wires — colored per connection type, faint, with a slow "flow" dash.
+    for (const e of this.edges) {
+      const A = this.nodes[e.a];
+      const B = this.nodes[e.b];
+      const ax = nx(A), ay = ny(A), bx = nx(B), by = ny(B);
+      const conn = getConn(e.type);
+      ctx.strokeStyle = conn.color;
+      ctx.globalAlpha = 0.16;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([6, 14]);
+      ctx.lineDashOffset = -this.t * 22;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Packets — small glowing dots travelling each wire, in the wire's color.
+    for (const e of this.edges) {
+      const A = this.nodes[e.a];
+      const B = this.nodes[e.b];
+      const ax = nx(A), ay = ny(A), bx = nx(B), by = ny(B);
+      const conn = getConn(e.type);
+      for (const pk of e.packets) {
+        const p = (this.t * pk.spd + pk.off) % 1;
+        const x = ax + (bx - ax) * p;
+        const y = ay + (by - ay) * p;
+        ctx.globalAlpha = 0.5;
+        ctx.shadowColor = conn.color;
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = conn.color;
+        ctx.beginPath();
+        ctx.arc(x, y, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // Nodes — the real service art, scaled down and faded, bobbing gently.
+    const look = { x: 0, y: 0.12 };
+    for (const n of this.nodes) {
+      ctx.save();
+      ctx.translate(nx(n), ny(n));
+      ctx.scale(0.52, 0.52);
+      drawService(ctx, n.svc, 0, 0, { bob: this.t * 1.4 + n.ph, look, alpha: 0.5 });
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
   update(dt) {
     this.t += dt;
     const input = this.game.input;
-
-    for (const s of this.sparks) {
-      s.x += s.spd * dt * 0.15;
-      if (s.x > 1.1) s.x -= 1.2;
-    }
 
     // New Game confirmation modal: it owns all input while open.
     if (this.confirmReset) {
@@ -167,15 +265,10 @@ export class TitleScene extends Scene {
     }
     ctx.stroke();
 
-    // Drifting sparks.
-    for (const s of this.sparks) {
-      const px = s.x * W;
-      const py = s.y * H + Math.sin(this.t * 0.8 + s.ph) * 8;
-      ctx.fillStyle = "rgba(255,209,102,0.5)";
-      ctx.beginPath();
-      ctx.arc(px, py, 2.2 * s.s, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    // Living architecture backdrop: faded service nodes joined by typed wires
+    // (VPC / Peering / TGW / PrivateLink) with packets flowing along them —
+    // a preview of the actual game world behind the title.
+    this._renderBackdrop(ctx, W, H);
 
     const cx = W / 2;
     const topY = H * 0.22;
