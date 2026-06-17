@@ -177,11 +177,14 @@ const levels3c = await page.evaluate(async () => {
   const ss = m.LEVELS.serverless_spike;
   const cs = m.LEVELS.cold_storage;
   const rp = m.LEVELS.right_price;
+  const ar = m.LEVELS.across_the_region;
   return {
     levelCount: m.LEVEL_ORDER.length,
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
-    lastIsRightPrice: m.LEVEL_ORDER.at(-1) === "right_price",
+    lastIsRegion: m.LEVEL_ORDER.at(-1) === "across_the_region",
+    rightPriceNextRegion: rp?.next === "across_the_region",
+    regionHasFailureEvent: (ar?.events || []).some((e) => e.kind === "region_failure"),
     serverlessNextCold: ss?.next === "cold_storage",
     coldNeedsGlacier: (cs?.winRequires?.sinkIs || []).includes("s3_glacier"),
     rightNeedsCheapCompute: (rp?.winRequires?.pathContainsAny || []).some((id) => ["ec2_reserved", "ec2_spot"].includes(id)),
@@ -658,6 +661,35 @@ const rightWin = await page.evaluate(async () => {
   return { onDemandBlocked, reservedOk, spotOfflineDuringEvent };
 });
 
+// T6.6 across_the_region: a region failure downs the primary region (even
+// Multi-AZ there), but the DR region (last band) + the global gate survive, and
+// a DR-region route still works.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "across_the_region" }));
+await page.waitForTimeout(300);
+const regionDR = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const ev = await import("./src/waves/events.js");
+  const K = (c, r) => c + "," + r;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  // Primary-region Multi-AZ DB (band 0, col ~3) and a DR-region stack (band 2,
+  // cols 13-15 on an 18-wide board → zone 2).
+  s.grid.place(S.rds_multiaz, 3, 3);          // primary region, "HA" but single-region
+  s.grid.place(S.ec2, 14, 5);                 // DR region compute
+  s.grid.place(S.rds, 15, 5);                 // DR region DB
+  s.grid.addEdge(K(gc, gr), K(14, 5), "vpc"); // gate -> DR compute (global gate)
+  s.grid.addEdge(K(14, 5), K(15, 5), "vpc");
+  // Inject an active region failure (downs the primary region's bands).
+  s.events.events.push({ kind: "region_failure", state: "active", at: 0, duration: 9999, warn: 0, zones: [0, 1] });
+  const primaryMultiAzDown = s._isKeyDisabled(K(3, 3));   // Multi-AZ does NOT survive a region loss
+  const drComputeUp = !s._isKeyDisabled(K(14, 5));        // DR region survives
+  const gateUp = !s._isKeyDisabled(K(gc, gr));            // Route 53 is global
+  const drRouteSurvives = (await import("./src/grid/pathfind.js")).gateHasRoute(
+    s.grid, K(gc, gr), (key) => s._isKeyDisabled(key)
+  );
+  return { primaryMultiAzDown, drComputeUp, gateUp, drRouteSurvives };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -687,6 +719,7 @@ console.log("fanOutWin:", JSON.stringify(fanOutWin));
 console.log("cost6d:", JSON.stringify(cost6d));
 console.log("coldWin:", JSON.stringify(coldWin));
 console.log("rightWin:", JSON.stringify(rightWin));
+console.log("regionDR:", JSON.stringify(regionDR));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -721,10 +754,12 @@ if (catalog3b.groupCount !== 6)        problems.push("PALETTE_GROUPS should have
 if (catalog3b.sqsBuffers !== 0.5)      problems.push("SQS should buffer spikes (attackMitigation 0.5)");
 if (!catalog3b.snsExists)              problems.push("SNS service missing");
 if (!catalog3b.msgGroup)               problems.push("PALETTE_GROUPS should include the integration/Msg group");
-if (levels3c.levelCount !== 17)     problems.push("LEVEL_ORDER should have 17 levels");
+if (levels3c.levelCount !== 18)     problems.push("LEVEL_ORDER should have 18 levels");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.lastIsRightPrice)     problems.push("right_price should be the last level");
+if (!levels3c.lastIsRegion)         problems.push("across_the_region should be the last level");
+if (!levels3c.rightPriceNextRegion) problems.push("right_price.next should chain to across_the_region");
+if (!levels3c.regionHasFailureEvent) problems.push("across_the_region should schedule a region_failure event");
 if (!levels3c.serverlessNextCold)   problems.push("serverless_spike.next should chain to cold_storage");
 if (!levels3c.coldNeedsGlacier)     problems.push("cold_storage should require the s3_glacier sink");
 if (!levels3c.rightNeedsCheapCompute) problems.push("right_price should require Reserved/Spot compute");
@@ -823,6 +858,10 @@ if (!coldWin.glacierOk)             problems.push("cold_storage: a Glacier sink 
 if (!rightWin.onDemandBlocked)      problems.push("right_price: an On-Demand EC2 path should NOT win");
 if (!rightWin.reservedOk)           problems.push("right_price: a Reserved-compute path should win");
 if (!rightWin.spotOfflineDuringEvent) problems.push("right_price: a Spot tile should go offline during a spot-interruption event");
+if (!regionDR.primaryMultiAzDown)   problems.push("across_the_region: Multi-AZ in the primary region should go down in a region failure");
+if (!regionDR.drComputeUp)          problems.push("across_the_region: DR-region tiles should survive a region failure");
+if (!regionDR.gateUp)               problems.push("across_the_region: the global Route 53 gate should survive a region failure");
+if (!regionDR.drRouteSurvives)      problems.push("across_the_region: a DR-region route should keep serving through the outage");
 
 console.log("phase4:", JSON.stringify(phase4));
 

@@ -27,6 +27,7 @@ export const EVENT_KIND = {
   TRAFFIC_SPIKE: "traffic_spike",
   COST_AUDIT: "cost_audit",
   SPOT_INTERRUPTION: "spot_interruption",
+  REGION_FAILURE: "region_failure",
 };
 
 // How many AZ bands the grid is divided into.
@@ -71,6 +72,12 @@ export class EventDirector {
           : Math.floor(Math.random() * AZ_COUNT);
       }
       if (ev.kind === EVENT_KIND.AZ_FAILURE) usedZones.add(ev.zone);
+      // A region failure downs a set of AZ bands (the "primary region"). Default:
+      // every band except the last, leaving the last band as the surviving DR region.
+      if (ev.kind === EVENT_KIND.REGION_FAILURE && ev.zones == null) {
+        ev.zones = [];
+        for (let z = 0; z < AZ_COUNT - 1; z++) ev.zones.push(z);
+      }
       return ev;
     });
     this.t = 0;
@@ -105,10 +112,24 @@ export class EventDirector {
     return false;
   }
 
-  // Set of currently-failed zone indices (for floor tinting).
+  // True if the tile's zone is inside an active region failure (the whole
+  // primary region is down). Unlike an AZ failure, Multi-AZ does NOT survive this
+  // — only a stack replicated into the surviving DR region (and the global gate).
+  isTileInFailedRegion(col, row) {
+    const z = zoneOfColumn(col, this.cols);
+    for (const e of this._active(EVENT_KIND.REGION_FAILURE)) {
+      if ((e.zones || []).includes(z)) return true;
+    }
+    return false;
+  }
+
+  // Set of currently-failed zone indices (for floor tinting) — AZ + region.
   failedZones() {
     const s = new Set();
     for (const e of this._active(EVENT_KIND.AZ_FAILURE)) s.add(e.zone);
+    for (const e of this._active(EVENT_KIND.REGION_FAILURE)) {
+      for (const z of e.zones || []) s.add(z);
+    }
     return s;
   }
 
@@ -182,6 +203,8 @@ function warningText(e, cols) {
       return "⚠ Cost audit scheduled — your bill is about to be scrutinised";
     case EVENT_KIND.SPOT_INTERRUPTION:
       return "⚠ Spot capacity reclamation inbound — Spot instances will be interrupted";
+    case EVENT_KIND.REGION_FAILURE:
+      return "⚠ Region-wide outage imminent — the entire primary region is going dark";
     default:
       return "⚠ Incident inbound";
   }
@@ -197,6 +220,8 @@ function activeText(e, cols) {
       return "💸 Cost audit active — running bill inflated";
     case EVENT_KIND.SPOT_INTERRUPTION:
       return "🎰 Spot interruption — Spot instances are OFFLINE";
+    case EVENT_KIND.REGION_FAILURE:
+      return "🛑 PRIMARY REGION DOWN — only the DR region survives. Route 53, fail over!";
     default:
       return "Incident active";
   }

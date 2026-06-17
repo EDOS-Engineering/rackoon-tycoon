@@ -638,7 +638,7 @@ export const LEVELS = {
       { id: "rds", col: 12, row: 4 },
     ],
     goalRequests: 85,
-    next: null, // end of the campaign chain (for now)
+    next: "across_the_region",
     waves: [
       { name: "Baseline",     duration: 22, rate: 1.2 },
       { name: "Steady state", duration: 30, rate: 1.5 },
@@ -663,6 +663,41 @@ export const LEVELS = {
       "A steady, predictable baseline runs all day. Paying full On-Demand rates for always-on capacity is the expensive way — and over-relying on Spot will bite you when AWS reclaims it.\n\nMatch purchasing to the workload: a Reserved Instance / Savings Plan commits to the steady base for ~40–60% off On-Demand. Spot is up to 90% off but interruptible — only for fault-tolerant work. A spot-interruption event WILL hit during this shift.\n\nFront the database with Reserved compute (Compute tab). Leave full-price On-Demand EC2 out.\n\n⚠ WIN CONDITION: serve the load with Reserved (or Spot) compute, not On-Demand EC2.\n\nRoute 85 to win.",
     examTip:
       "Purchasing options: On-Demand (flexible, priciest — short/unpredictable), Reserved Instances / Savings Plans (commit 1–3 yr for steady baseline, big discount — Savings Plans flex across families/regions), Spot (up to 90% off, interruptible — batch/CI/stateless fault-tolerant). Cost-optimal fleets mix Reserved baseline + Spot/On-Demand for bursts.",
+  },
+
+  // T6.6 — Domain: Resilient. Survive a whole-region outage with a multi-region
+  // DR posture: a replicated stack in the surviving region + Route 53 failover.
+  across_the_region: {
+    id: "across_the_region",
+    name: "Across the Region",
+    subtitle: "A whole region goes dark — keep serving",
+    cols: 18,
+    rows: 11,
+    budget: 3600,
+    spawnRate: 1.0,
+    gates: [{ col: 1, row: 5 }],
+    // The board's three AZ bands read as: PRIMARY region (left two bands) + a DR
+    // region (the rightmost band). A region failure downs the whole primary.
+    seed: [],
+    goalRequests: 90,
+    next: null, // end of the campaign chain
+    waves: [
+      { name: "Steady ops",     duration: 24, rate: 1.2 },
+      { name: "Normal load",    duration: 26, rate: 1.6 },
+      { name: "Through the outage", duration: 30, rate: 1.8 },
+      { name: "Recovery",       duration: 22, rate: 1.4 },
+    ],
+    events: [
+      { at: 30, kind: "az_failure", duration: 12, warn: 6 },
+      // The big one: the entire primary region goes dark (its AZ bands). Only the
+      // DR region (rightmost band) + the global Route 53 gate survive.
+      { at: 58, kind: "region_failure", duration: 20, warn: 8 },
+    ],
+    slaMaxDropRate: 0.32,
+    intro:
+      "Disaster recovery time. This board spans a PRIMARY region (the left two AZ bands) and a DR region (the rightmost band, us-rk-1c). Partway through the shift, the ENTIRE primary region goes dark.\n\nMulti-AZ won't save you here — a synchronous standby still lives in the same region. You need a stack replicated into the DR region, and Route 53 (the global gate) to fail traffic over to it. That's the spectrum: backup/restore → pilot light → warm standby → active-active multi-site, trading cost for a smaller RTO/RPO.\n\nBuild your primary stack, then replicate compute + a database into the rightmost DR band and wire the gate to it too. When the region drops, Route 53 keeps serving from the survivor.\n\n⚠ A region-wide outage WILL hit — survive it without breaching the SLA.\n\nRoute 90 to win.",
+    examTip:
+      "DR strategies by cost↑ / RTO·RPO↓: Backup & Restore → Pilot Light → Warm Standby → Multi-Site Active-Active. Route 53 health checks + failover/latency routing shift traffic between regions automatically. Multi-AZ = in-region HA (not DR); cross-Region Read Replicas / snapshots / S3 CRR give cross-region durability. Match the strategy to the business RTO/RPO.",
   },
 
   // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
@@ -707,6 +742,7 @@ export const LEVEL_ORDER = [
   "serverless_spike",
   "cold_storage",
   "right_price",
+  "across_the_region",
 ];
 
 export const FIRST_LEVEL = "first_light";

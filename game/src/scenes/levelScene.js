@@ -367,12 +367,15 @@ export class LevelScene extends Scene {
     const spotDown = this.events.spotInterrupted();
     let changed = false;
     for (const b of this.grid.buildings.values()) {
-      // Route 53 (global) and azResilient services (e.g. RDS Multi-AZ with a
-      // synchronous standby) are never disabled by AZ failure events. Spot tiles
-      // additionally go offline during a spot-interruption event.
-      let off = (b.service.role === ROLE.GATE || b.service.azResilient)
-        ? false
-        : this.events.isTileDisabled(b.col, b.row);
+      // Route 53 (global) survives everything. A region failure downs the whole
+      // primary region — Multi-AZ does NOT save you there (single-region). An AZ
+      // failure is survived by azResilient (Multi-AZ) tiles. Spot tiles also go
+      // offline during a spot-interruption event.
+      let off;
+      if (b.service.role === ROLE.GATE) off = false;
+      else if (this.events.isTileInFailedRegion(b.col, b.row)) off = true;
+      else if (b.service.azResilient) off = false;
+      else off = this.events.isTileDisabled(b.col, b.row);
       if (b.service.spotInterruptible && spotDown) off = true;
       if (off !== b.disabled) {
         b.disabled = off;
@@ -395,7 +398,7 @@ export class LevelScene extends Scene {
     for (const e of this.events.events) {
       if ((e.state === "warning" || e.state === "active") && !e._sounded) {
         e._sounded = true;
-        if (e.kind === "az_failure" || e.kind === "spot_interruption") audio.play("azFail");
+        if (e.kind === "az_failure" || e.kind === "spot_interruption" || e.kind === "region_failure") audio.play("azFail");
         else if (e.kind === "traffic_spike") audio.play("spike");
         else audio.play("alert");
       }
@@ -426,7 +429,12 @@ export class LevelScene extends Scene {
     const b = this.grid.getBuilding(c, r);
     if (b && !this._dependencyMet(b)) return true;
     if (b && b.service.spotInterruptible && this.events.spotInterrupted()) return true;
-    if (b && (b.service.role === ROLE.GATE || b.service.azResilient)) return false;
+    // Route 53 (gate) is global and survives AZ + region failures.
+    if (b && b.service.role === ROLE.GATE) return false;
+    // A region failure downs the whole primary region — Multi-AZ can't save it.
+    if (this.events.isTileInFailedRegion(c, r)) return true;
+    // An AZ failure is survived by azResilient (Multi-AZ) services.
+    if (b && b.service.azResilient) return false;
     return this.events.isTileDisabled(c, r);
   }
 
