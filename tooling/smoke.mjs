@@ -692,6 +692,28 @@ const regionDR = await page.evaluate(async () => {
   return { primaryMultiAzDown, drComputeUp, gateUp, drRouteSurvives };
 });
 
+// Sim-depth incident kinds: the new EVENT_KINDs exist and each drives its effect
+// through the EventDirector (viral spike, dependency outage, noisy neighbor, cert
+// expiry, price hike).
+const simDepth = await page.evaluate(async () => {
+  const m = await import("./src/waves/events.js");
+  const K = m.EVENT_KIND;
+  const dir = (ev) => {
+    const d = new m.EventDirector([{ at: 0, duration: 9999, warn: 0, ...ev }], 18);
+    d.tick(0.1);
+    return d;
+  };
+  const dep = dir({ kind: K.DEPENDENCY_OUTAGE, target: "rds" });
+  return {
+    kinds: !!(K.VIRAL_SPIKE && K.DEPENDENCY_OUTAGE && K.NOISY_NEIGHBOR && K.CERT_EXPIRY && K.PRICE_HIKE),
+    viral: dir({ kind: K.VIRAL_SPIKE, magnitude: 3 }).spawnMultiplier() === 3,
+    price: dir({ kind: K.PRICE_HIKE, magnitude: 1.5 }).billMultiplier() === 1.5,
+    noisy: dir({ kind: K.NOISY_NEIGHBOR, magnitude: 0.6 }).capacityMultiplier() === 0.6,
+    cert: dir({ kind: K.CERT_EXPIRY, magnitude: 0.4 }).edgeDropRate() === 0.4,
+    depOut: dep.isServiceDisabled("rds") && !dep.isServiceDisabled("ec2"),
+  };
+});
+
 // Company Run Report: cashing out a freerun run hands the results scene a
 // company-shaped payload (mode + milestone eval + ops scorecard) so it renders
 // the dedicated report instead of the scenario verdict.
@@ -759,6 +781,7 @@ console.log("coldWin:", JSON.stringify(coldWin));
 console.log("rightWin:", JSON.stringify(rightWin));
 console.log("regionDR:", JSON.stringify(regionDR));
 console.log("runReport:", JSON.stringify(runReport));
+console.log("simDepth:", JSON.stringify(simDepth));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -909,6 +932,13 @@ if (!runReport.isCompany)           problems.push("company results should flag i
 if (runReport.mode !== "freerun")   problems.push("company results payload should carry mode=freerun");
 if (runReport.milestoneTotal !== 4) problems.push("company Run Report should carry the 4 milestones");
 if (!runReport.hasOps || !runReport.sloPresent) problems.push("company Run Report should carry the ops scorecard (SLO etc.)");
+// Sim-depth incident kinds.
+if (!simDepth.kinds)  problems.push("sim-depth: the five new EVENT_KINDs should exist");
+if (!simDepth.viral)  problems.push("sim-depth: viral_spike should drive the spawn multiplier");
+if (!simDepth.price)  problems.push("sim-depth: price_hike should inflate the bill multiplier");
+if (!simDepth.noisy)  problems.push("sim-depth: noisy_neighbor should derate capacity");
+if (!simDepth.cert)   problems.push("sim-depth: cert_expiry should set an edge drop rate");
+if (!simDepth.depOut) problems.push("sim-depth: dependency_outage should disable only the targeted service");
 
 console.log("phase4:", JSON.stringify(phase4));
 
