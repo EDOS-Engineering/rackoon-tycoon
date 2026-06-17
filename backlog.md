@@ -9,6 +9,7 @@
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 - **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
+- **2026-06-17 — Phase 3 & Phase 5 closed out.** (T3.2) "Mesh vs Bridge" campaign finale — Transit Gateway hub vs N² peering mesh; 8th campaign level, wins require a TGW hop. (T5.3) edge-type `winRequires` (`edgeTypeAll`/`edgeTypeAny`) inspects the connection type of wires on the active path — the capability T3.2 needed; also unblocks a future PrivateLink-edge level. (T3.7) teaching layer — briefing now shows an up-front exam-tip strip with a study-guide tie-back (reinforced again on results). Only Phase 5b (transitive-routing sim) remains, explicitly deferred. → `levels.js`, `levelScene.js`, `smoke.mjs`. smoke: 0 errors, 0 problems (8 levels).
 - **2026-06-17 — Phase 5 T5.1/T5.2 shipped (typed connections).** Wires now carry a real AWS networking construct. Edge type stored on the grid (`edgeType` map; `addEdge(...,type)`, `getEdgeType`, `forEachEdge` passes type). Four types: VPC link (default), VPC Peering, Transit Gateway (+2/hop processing), PrivateLink (+1.3/hop but cross-AZ exempt, must end at a sink). Picker row in the build bar (chips + hover tooltip) and `C` to cycle; `_commitWire`/preview validate `connTypeAllows`; billing adds `conn.hopCost` and skips the cross-AZ penalty when `crossAzExempt`; renderer colours each edge by type and tints only non-exempt cross-AZ wires. → `grid.js`, `connections.js`, `levelScene.js`, `ui/palette.js`, `render/gridRenderer.js`, help text, `smoke.mjs`. Deferred: transitive-routing sim (Phase 5b), Direct Connect (needs on-prem node). smoke: 0 errors, 0 problems.
 - **2026-06-17 — Cross-AZ transfer = full 8× penalty (exam realism).** Reverted the earlier softened inter-AZ cost. Transfer model now mirrors AWS billing exactly: intra-AZ traffic is FREE (a plain tile contributes 0 to a hop), a tile's own `transferCostMul` (NAT ×8, VPCE ×0.02) is its processing/egress charge and stacks regardless of AZ, and crossing an AZ boundary adds the full `BILL.crossAzPenalty` (8×). Gate/internet-edge hops stay exempt. Makes AZ-failure events bite: multi-AZ HA is now a real cost/resilience tradeoff (core SAA theme). → `billing.js`, `levelScene.js`, `connections.js`, help text, `smoke.mjs`. smoke: 0 errors, 0 problems.
 - **2026-06-17 — AWS-fidelity pass.** Fixed game logic that diverged from real AWS behavior. (1) **Structural dependencies:** RDS Read Replica now requires a source primary (`rds`/`rds_multiaz`) on the board — a primary-less replica is flagged invalid (dashed amber ring + banner), carries no traffic, and is not a routing sink. New `dependsOn` catalog field + `_dependencyMet`. (2) **Gateway VPC Endpoint** may only front S3/DynamoDB (the two Gateway-endpoint services) — new `validSinks` + `canWire()` enforce it at wire time. (3) **Any-distance wiring:** dropped the neighbouring-square rule for all services (was gate-only) — a VPC links services across subnets/AZs, not just adjacent racks. Legality is purely service-appropriateness. (4) **Economy realism:** cross-AZ hops bill an inter-AZ transfer surcharge (`BILL.crossAzSurcharge`; gate/internet-edge hops exempt; cross-AZ wires tinted amber); catalog costs corrected — Gateway VPCE 40→25 (no hourly fee), Shield Advanced 200→300 (premium), Read Replica 80→130 (full standard instance), Multi-AZ stays ~2× single-AZ. → `catalog.js`, `billing.js`, `levelScene.js`, `grid.js`, `gridRenderer.js`, `smoke.mjs`. smoke: 0 errors, 0 problems.
@@ -109,7 +110,7 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 
 > **End of Phase 2:** ✅ a real game loop with stakes — committed, playtested, and tuned (intro-grace briefing, gentler economy, H help legend).
 
-### 🟠 PHASE 3 — Mechanics, AWS-sim depth & boss gaps (Sprint 3)
+### ✅ PHASE 3 — Mechanics, AWS-sim depth & boss gaps (Sprint 3) — COMPLETE
 
 > **MVP Epoch goal:** by the end of this Epoch the game is a *semi-complete
 > simulation of the AWS ecosystem for solutions architecture* — a meaningfully
@@ -137,14 +138,18 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 
 **Sprint 3c — Gap-mapped boss levels** ✅
 - [x] T3.1 "The Leaky Pipe" — NAT money-leak; pre-seeded NAT + cost audit; fix = VPC Endpoint.
-- [ ] T3.2 "Mesh vs Bridge" — deferred to Phase 5 (requires typed connections).
+- [x] T3.2 "Mesh vs Bridge" — Transit Gateway hub vs N² peering mesh. Shipped as the
+      campaign finale using Phase 5 typed connections + the new edge-type `winRequires`
+      (`edgeTypeAny: ["tgw"]`). → `levels.js`, `levelScene.js`.
 - [x] T3.3 "Replay or It's Gone" — Kinesis Streams (replayable) vs Firehose (no-replay sink).
 - [x] T3.4 "Single Writer's Burden" — Aurora SV2 (vertical auto-scale) vs Limitless (horizontal).
 - [x] T3.5 "Raccoons at the Gate" — DDoS traffic spikes; place Shield/WAF/CloudFront.
 - [x] T3.6 "When the Zone Goes Dark" — shipped Phase 2; updated with RDS Multi-AZ tip in briefing.
 
-**Sprint 3d — Teaching layer**
-- [ ] T3.7 In-level teaching cards + post-level "exam tip" tie-back to the study guide.
+**Sprint 3d — Teaching layer** ✅
+- [x] T3.7 In-level teaching cards + post-level "exam tip" tie-back. The briefing now
+      carries an exam-tip strip (taught up-front, reinforced on the results screen) with
+      a study-guide tie-back line; per-level `examTip` on all levels. → `levelScene.js`.
 
 > **End of Phase 3:** difficulty + diagonal/typed connections + a broader AWS
 > catalog + the gap-mapped boss levels. Each sub-sprint commits independently.
@@ -161,7 +166,7 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 
 > **End of Phase 4:** complete, polished, shippable. Final commit.
 
-### 🟠 PHASE 5 — Deep networking layer (typed connections) — T5.0–T5.2 done; 5b (transitive sim) deferred
+### ✅ PHASE 5 — Deep networking layer (typed connections) — T5.0–T5.2 done; only the 5b transitive-sim stretch deferred
 
 **Sprint 5 — Typed connections & VPC topology.** Detailed plan below; sized for
 one session. Foundation (`services/connections.js`) already landed.
@@ -223,8 +228,10 @@ connection *types*. Resolved as follows, to avoid redundancy and unmodelled node
 - [x] **T5.2 Per-type topology rules** — done via `connTypeAllows` (PrivateLink
       requires exactly one sink end), enforced at wire-commit + preview. Other three
       stay permissive (lesson is cost/visual + transitivity note in tooltips).
-      Optional boss-level hook (a `winRequires` demanding a `privatelink` edge) NOT
-      done — candidate follow-up, needs `winRequires` to inspect edge types.
+- [x] **T5.3 Edge-type `winRequires`** — `_checkWinRequires` now supports
+      `edgeTypeAll` / `edgeTypeAny`, inspecting the connection type of each wire on the
+      active path. Exercised by the `mesh_bridge` level (TGW). Unblocks future levels
+      that demand a PrivateLink edge (Phase 6 T6.1). → `levelScene.js`.
 
 #### Verification (`tooling/smoke.mjs`)
 - `connections` import OK; `CONN_ORDER.length === 4`; `connTypeAllows("privatelink", edge, sink)`
@@ -308,10 +315,9 @@ extended where noted); events reuse `EventDirector`.
   *Deps:* optional **NEW** `api_gateway` front.
 
 **Sprint 6d — Cost**
-- **T6.10 "Mesh vs Bridge"** *(revives the deferred T3.2)* — connect many VPCs cheaply.
-  *Lesson:* Transit Gateway (transitive hub) vs N² VPC Peering. *Win:* use `tgw` to
-  link ≥3 network tiles (vs an explosion of `peering` edges). *Deps:* none (Phase 5
-  typed edges) — needs `winRequires` on **edge type/count** (same extension as T6.1).
+- ~~**T6.10 "Mesh vs Bridge"**~~ — ✅ **shipped early as T3.2** (campaign finale; TGW
+  hub via `edgeTypeAny: ["tgw"]`). The edge-type `winRequires` extension it needed
+  (now T5.3) is also done — so T6.1 "Private Lines" can reuse it for a PrivateLink edge.
 - **T6.11 "Cold Storage"** — tier aging data to cut spend. *Lesson:* S3 lifecycle →
   IA → Glacier → Deep Archive; retrieval tradeoffs. *Win:* route archival data to a
   low-cost storage class under budget. *Deps:* **NEW** S3 storage-class / lifecycle

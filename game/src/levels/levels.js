@@ -231,7 +231,7 @@ export const LEVELS = {
     gates: [{ col: 1, row: 5 }],
     seed: [],
     goalRequests: 100,
-    next: null, // end of Sprint 3c campaign
+    next: "mesh_bridge",
     waves: [
       { name: "Baseline",        duration: 16, rate: 0.8  },
       { name: "Growth",          duration: 22, rate: 1.4  },
@@ -256,6 +256,50 @@ export const LEVELS = {
     examTip:
       "Aurora SV2 = vertical scaling (more ACUs, same single writer). Aurora Limitless = horizontal sharding (distributed writes). On SAA-C03: if the bottleneck is a single writer's I/O ceiling, Limitless. If it's unpredictable load on a single instance, SV2.",
   },
+  // T3.2 — Priority Gap: many-VPC connectivity (Transit Gateway vs Peering mesh).
+  // Uses Phase 5 typed connections: the win requires a Transit Gateway hop in the
+  // route (pick the TGW wire type — press C or the picker), teaching hub-and-spoke
+  // over an N² peering mesh.
+  mesh_bridge: {
+    id: "mesh_bridge",
+    name: "Mesh vs Bridge",
+    subtitle: "Wire many networks without an N² peering tangle",
+    cols: 18,
+    rows: 11,
+    budget: 3200,
+    spawnRate: 0.95,
+    gates: [{ col: 1, row: 5 }],
+    // Three network anchors pre-seeded in different AZ bands (left/middle/right).
+    // The player routes guests across them and on to a database — the clean answer
+    // is a Transit Gateway hub rather than peering every pair.
+    seed: [
+      { id: "alb", col: 6, row: 3 },
+      { id: "ec2", col: 11, row: 7 },
+    ],
+    goalRequests: 80,
+    next: null, // end of the campaign chain
+    waves: [
+      { name: "Warm-up",        duration: 18, rate: 0.9 },
+      { name: "Cross-VPC flow", duration: 28, rate: 1.5 },
+      { name: "Peak mesh",      duration: 30, rate: 2.2 },
+      { name: "Wind-down",      duration: 18, rate: 1.3 },
+    ],
+    events: [
+      { at: 34, kind: "cost_audit",   duration: 14, warn: 6, magnitude: 1.6 },
+      { at: 64, kind: "traffic_spike", duration: 12, warn: 6, magnitude: 1.9 },
+    ],
+    slaMaxDropRate: 0.32,
+    // Win requires a Transit Gateway hop somewhere in the active route.
+    winRequires: {
+      edgeTypeAny: ["tgw"],
+      requirementHint: "Route must cross a Transit Gateway hop — select the TGW wire type (press C or the picker) and wire your VPCs through the hub",
+    },
+    intro:
+      "Several network segments need to talk to each other and reach a database. With VPC Peering you'd wire every pair — that's an N² mesh that explodes as you add VPCs, and peering is non-transitive (A↔B and B↔C does NOT give A↔C).\n\nTransit Gateway is the hub: attach each VPC once and it routes transitively between all of them. Fewer connections, scales to thousands of attachments.\n\nPick the connection type in the build bar (or press C to cycle): VPC · Peering · TGW · PrivateLink. Wire your route through a Transit Gateway hop.\n\n⚠ WIN CONDITION: the route must cross a Transit Gateway (TGW) connection.\n\nRoute 80 to win.",
+    examTip:
+      "Transit Gateway = transitive, hub-and-spoke, scales to thousands of VPCs ($0.02/GB processed + attachment/hr). VPC Peering = 1:1, no processing fee, but non-transitive and an N² mesh at scale. On SAA-C03: many VPCs that must interconnect → Transit Gateway.",
+  },
+
   // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
   sandbox: {
     id: "sandbox",
@@ -288,6 +332,7 @@ export const LEVEL_ORDER = [
   "raccoons_gate",
   "replay_or_gone",
   "single_writer",
+  "mesh_bridge",
 ];
 
 export const FIRST_LEVEL = "first_light";

@@ -164,11 +164,14 @@ const r53 = await page.evaluate(async () => {
 const levels3c = await page.evaluate(async () => {
   const m = await import("./src/levels/levels.js");
   const lp = m.LEVELS.leaky_pipe;
+  const mb = m.LEVELS.mesh_bridge;
   return {
     levelCount: m.LEVEL_ORDER.length,
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
-    singleWriterIsLast: m.LEVEL_ORDER.at(-1) === "single_writer",
+    meshBridgeIsLast: m.LEVEL_ORDER.at(-1) === "mesh_bridge",
+    singleWriterNext: m.LEVELS.single_writer?.next === "mesh_bridge",
+    meshNeedsTgw: (mb?.winRequires?.edgeTypeAny || []).includes("tgw"),
   };
 });
 
@@ -379,6 +382,27 @@ const sceneConn = await page.evaluate(async () => {
   return { plinkEdgeRejected, plinkToSinkOk, recordedType };
 });
 
+// Edge-type winRequires (Phase 5 + T3.2): mesh_bridge accepts a win only when the
+// route crosses a TGW hop. Build a route and flip the edge type.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "mesh_bridge" }));
+await page.waitForTimeout(300);
+const edgeWinReq = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.place(S.rds, gc + 2, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  const blockedByVpc = !s._checkWinRequires().ok; // all-VPC route → win blocked
+  // Flip the second hop to a Transit Gateway link.
+  s.grid.removeEdge(gc + 1, gr, gc + 2, gr);
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "tgw");
+  const okWithTgw = s._checkWinRequires().ok;    // now satisfies edgeTypeAny:["tgw"]
+  return { blockedByVpc, okWithTgw };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -398,6 +422,7 @@ console.log("depRouting:", JSON.stringify(depRouting));
 console.log("wireRules:", JSON.stringify(wireRules));
 console.log("typedConns:", JSON.stringify(typedConns));
 console.log("sceneConn:", JSON.stringify(sceneConn));
+console.log("edgeWinReq:", JSON.stringify(edgeWinReq));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -429,14 +454,12 @@ if (!catalog3b.rdsMAZResilient)        problems.push("RDS Multi-AZ azResilient s
 if (!catalog3b.aurSV2AutoScale)        problems.push("Aurora SV2 autoScale should be true");
 if (!catalog3b.streamsReplayable)      problems.push("Kinesis Streams replayable should be true");
 if (catalog3b.groupCount !== 5)        problems.push("PALETTE_GROUPS should have 5 groups");
-if (levels3c.levelCount !== 7)      problems.push("LEVEL_ORDER should have 7 levels");
+if (levels3c.levelCount !== 8)      problems.push("LEVEL_ORDER should have 8 levels (incl. mesh_bridge)");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.singleWriterIsLast)   problems.push("single_writer should be last level");
-if (levels3c.levelCount !== 7)      problems.push("LEVEL_ORDER should have 7 levels");
-if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
-if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.singleWriterIsLast)   problems.push("single_writer should be last level");
+if (!levels3c.meshBridgeIsLast)     problems.push("mesh_bridge should be the last level");
+if (!levels3c.singleWriterNext)     problems.push("single_writer.next should chain to mesh_bridge");
+if (!levels3c.meshNeedsTgw)         problems.push("mesh_bridge winRequires should demand a TGW edge");
 // Pre-Phase-5 fix assertions.
 if (azFix.distinctZones < 2)        problems.push("AZ failure zone not randomized — all " + azFix.distinctZones + " trials hit same zone");
 if (!winReq.leakyHasReq)            problems.push("leaky_pipe missing winRequires");
@@ -484,6 +507,8 @@ if (!typedConns.vpcAnyPair)         problems.push("VPC link should allow any can
 if (!sceneConn.plinkEdgeRejected)   problems.push("scene: PrivateLink between non-sink tiles should be rejected");
 if (!sceneConn.plinkToSinkOk)       problems.push("scene: PrivateLink to a sink should commit");
 if (sceneConn.recordedType !== "privatelink") problems.push("scene: committed edge should record its connection type");
+if (!edgeWinReq.blockedByVpc)       problems.push("mesh_bridge: all-VPC route should NOT satisfy the TGW win rule");
+if (!edgeWinReq.okWithTgw)          problems.push("mesh_bridge: a TGW hop should satisfy the win rule");
 
 console.log("phase4:", JSON.stringify(phase4));
 

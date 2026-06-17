@@ -521,6 +521,26 @@ export class LevelScene extends Scene {
       }
     }
 
+    // Edge-type requirements (Phase 5 typed connections): inspect the connection
+    // type of each wire the active path traverses. Lets a level demand e.g. a
+    // Transit Gateway hop (Mesh vs Bridge) or a PrivateLink hop (private access).
+    if (req.edgeTypeAll || req.edgeTypeAny) {
+      const edgeTypes = new Set();
+      for (let i = 0; i < activePath.length - 1; i++) {
+        edgeTypes.add(this.grid.getEdgeType(activePath[i], activePath[i + 1]));
+      }
+      if (req.edgeTypeAll) {
+        for (const t of req.edgeTypeAll) {
+          if (!edgeTypes.has(t)) {
+            return { ok: false, hint: req.requirementHint || "Required connection type missing from route" };
+          }
+        }
+      }
+      if (req.edgeTypeAny && !req.edgeTypeAny.some((t) => edgeTypes.has(t))) {
+        return { ok: false, hint: req.requirementHint || "Required connection type missing from route" };
+      }
+    }
+
     return { ok: true };
   }
 
@@ -1160,12 +1180,17 @@ export class LevelScene extends Scene {
       }
       for (const ln of wrapText(p, 64)) lines.push(ln);
     }
+    // Teaching card (T3.7): surface the SAA-C03 exam tip up-front, taught before
+    // the round (it's also shown again on the results screen for reinforcement).
+    const tipLines = this.level.examTip ? wrapText(this.level.examTip, 72) : [];
+    const tipH = tipLines.length ? tipLines.length * 15 + 40 : 0;
+
     const w = 600;
     const pad = 22;
     const titleH = 54;
     const bodyH = lines.length * 18;
     const btnH = 46;
-    const h = pad * 2 + titleH + bodyH + btnH + 18;
+    const h = pad * 2 + titleH + bodyH + tipH + btnH + 18;
     const x = W / 2 - w / 2;
     const y = Math.max(64, H / 2 - h / 2);
     this._briefingRect = { x, y, w, h };
@@ -1208,6 +1233,28 @@ export class LevelScene extends Scene {
     for (const ln of lines) {
       if (ln) ctx.fillText(ln, x + pad, ty);
       ty += 18;
+    }
+
+    // Exam-tip teaching strip (T3.7).
+    if (tipLines.length) {
+      ty += 8;
+      ctx.strokeStyle = "rgba(142,123,239,0.4)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + pad, ty);
+      ctx.lineTo(x + w - pad, ty);
+      ctx.stroke();
+      ty += 12;
+      ctx.font = "700 11px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.accent;
+      ctx.fillText("📚  SAA-C03 EXAM TIP  ·  deeper notes in the Rackoon study guide", x + pad, ty);
+      ty += 17;
+      ctx.font = FONT.uiSmall;
+      ctx.fillStyle = PALETTE.textDim;
+      for (const ln of tipLines) {
+        ctx.fillText(ln, x + pad, ty);
+        ty += 15;
+      }
     }
 
     // Begin button.
