@@ -170,7 +170,10 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 - [x] T4.3 Exam tips: `examTip` on all 19 services + all 7 levels; shown in palette tooltip, grid building tooltip, and results screen. → `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`
 - [x] T4.4 Sandbox mode (no win condition, 9999 budget, 20×12 grid) + dedicated title-screen button. → `levels.js`, `titleScene.js`, `levelScene.js`
 - [ ] T4.5 ~~Accessibility (keyboard, colorblind-safe palette)~~ **— DEPRECATED** (descoped from this Epoch per request). Perf pass + cross-browser check only.
-- [ ] T4.6 Final QA, README for the game, link study guide ↔ game.
+- [x] T4.6 README for the game (done) + study-guide ↔ game links (study guide → game
+      button in `index.html`; game → study-guide corner link in `game.html`). Final QA =
+      the headless smoke suite (`tooling/smoke.mjs`, 0/0). Remaining: a manual
+      cross-browser/device pass (rolls into T4.5).
 
 > **End of Phase 4:** complete, polished, shippable. Final commit.
 

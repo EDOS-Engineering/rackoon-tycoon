@@ -88,6 +88,26 @@
           transform: translateY(-10px);
         }
       }
+      /* Persistent link back to the SAA-C03 study guide (bottom-left corner). */
+      #studylink {
+        position: fixed;
+        left: 14px;
+        bottom: 12px;
+        z-index: 15;
+        font: 600 12px system-ui, sans-serif;
+        color: #9fb0c0;
+        text-decoration: none;
+        background: rgba(18, 24, 32, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 5px 10px;
+        border-radius: 8px;
+        opacity: 0.5;
+        transition: opacity 0.15s, color 0.15s;
+      }
+      #studylink:hover {
+        opacity: 1;
+        color: var(--accent);
+      }
       /* Graceful message if JS modules can't load (e.g. opened via file://). */
       #nojs {
         position: fixed;
@@ -107,6 +127,9 @@
   </head>
   <body>
     <canvas id="game"></canvas>
+
+    <!-- Link back to the companion SAA-C03 study guide. -->
+    <a id="studylink" href="../index.html" title="Open the SAA-C03 study guide">📖 Study guide</a>
 
     <!-- Loading splash (hidden by main.js once running). -->
     <div id="splash">
