@@ -257,10 +257,20 @@ export class LevelScene extends Scene {
 
       // Spawn loop (rate scaled by the current wave + any traffic spike).
       if (this.routeOk) {
+        // WAF / Shield tiles on the board reduce the effective spike multiplier.
+        // Each attackMitigation value absorbs that fraction of the spike excess.
+        let spikeMul = this.events.spawnMultiplier();
+        if (spikeMul > 1) {
+          for (const b of this.grid.buildings.values()) {
+            if (!b.disabled && b.service.attackMitigation) {
+              spikeMul = 1 + (spikeMul - 1) * (1 - b.service.attackMitigation);
+            }
+          }
+        }
         const rate =
           this.level.spawnRate *
           this.waves.multiplier() *
-          this.events.spawnMultiplier();
+          spikeMul;
         this._spawnAcc += sdt * rate;
         while (this._spawnAcc >= 1) {
           this._spawnAcc -= 1;
@@ -303,8 +313,11 @@ export class LevelScene extends Scene {
     // route must be recomputed (and in-flight packets on broken paths dropped).
     let changed = false;
     for (const b of this.grid.buildings.values()) {
-      // Route 53 is a global managed service — never disabled by an AZ failure.
-      const off = b.service.role === ROLE.GATE ? false : this.events.isTileDisabled(b.col, b.row);
+      // Route 53 (global) and azResilient services (e.g. RDS Multi-AZ with a
+      // synchronous standby) are never disabled by AZ failure events.
+      const off = (b.service.role === ROLE.GATE || b.service.azResilient)
+        ? false
+        : this.events.isTileDisabled(b.col, b.row);
       if (off !== b.disabled) {
         b.disabled = off;
         changed = true;
@@ -332,11 +345,11 @@ export class LevelScene extends Scene {
   }
 
   // True if the tile at this "c,r" key is currently disabled (offline).
-  // Route 53 (gate role) is a global managed service — immune to AZ failures.
+  // Gate (Route 53) and azResilient services are immune to AZ failures.
   _isKeyDisabled(key) {
     const [c, r] = Grid.parseKey(key);
     const b = this.grid.getBuilding(c, r);
-    if (b && b.service.role === ROLE.GATE) return false;
+    if (b && (b.service.role === ROLE.GATE || b.service.azResilient)) return false;
     return this.events.isTileDisabled(c, r);
   }
 
@@ -546,9 +559,11 @@ export class LevelScene extends Scene {
         const b = this.grid.getBuilding(c, r);
         if (b) b.activity = 1; // pulse the building the packet enters
         // ---- T2.1: data-transfer cost — each wire hop the packet crosses bills
-        // a small egress charge against the live bill (and the budget). ----
-        this.bill.chargeTransfer(1);
-        this.budget -= BILL.transferPerHop * this.bill.auditMul;
+        // a small egress charge. transferCostMul on NAT Gateway (×8) or VPC
+        // Endpoint (×0.02) reflects real AWS per-hop egress pricing. ----
+        const xferMul = (b && b.service.transferCostMul != null) ? b.service.transferCostMul : 1;
+        this.bill.chargeTransfer(xferMul);
+        this.budget -= BILL.transferPerHop * xferMul * this.bill.auditMul;
         if (this.budget < 0) this.budget = 0;
 
         // ---- T2.2: an overloaded building sheds the request crossing it. ----

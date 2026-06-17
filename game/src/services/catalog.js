@@ -1,18 +1,27 @@
 // catalog.js — Data-driven AWS service catalog.
 // Each service is a pure data record: id, label, emoji, brand color, stats
 // (cost/throughput/latency), a "role" used for routing/topology rules, and a
-// short tooltip blurb tying it back to the real AWS service. Phase 2 will read
-// `cost`/`throughput` for the live AWS bill + overload mechanics; Phase 1 uses
-// `cost` for budget gating and shows the rest in tooltips.
+// short tooltip blurb tying it back to the real AWS service.
+//
+// Optional gameplay-effect fields (all default to 1 / false / undefined if absent):
+//   transferCostMul  — multiplier on BILL.transferPerHop for data crossing this tile
+//                      (NAT Gateway = 8×; VPC Endpoint = 0.02×; default = 1)
+//   attackMitigation — fraction of a traffic-spike spawnMultiplier excess absorbed
+//                      (WAF = 0.5, Shield = 0.75; default = 0)
+//   azResilient      — if true, tile is NOT disabled by an AZ failure event
+//                      (RDS Multi-AZ has a synchronous standby; default = false)
+//   autoScale        — if true, effective throughput scales with demand up to 2×
+//                      (Aurora Serverless v2; default = false)
+//   replayable       — narrative flag for Kinesis Streams (tooltip/teach only)
 //
 // ROLES drive the request path. A valid round-trip is:
 //   GATE  ->  (any wired compute/edge tiles)  ->  SINK  ->  back to GATE
 // Roles:
 //   gate    — Route 53 entry/exit. Spawns requests; round-trip must return here.
-//   edge    — load balancer / cache / CDN style pass-through.
-//   compute — EC2/ASG, Lambda. Processes requests.
+//   edge    — load balancer / cache / CDN / network pass-through.
+//   compute — EC2/ASG, Lambda, Kinesis Streams.
 //   storage — S3 object store (acts as a valid sink too).
-//   sink    — databases (RDS, DynamoDB). The request's destination.
+//   sink    — databases (RDS, DynamoDB, Firehose). The request's destination.
 
 export const ROLE = {
   GATE: "gate",
@@ -25,6 +34,7 @@ export const ROLE = {
 // Master catalog. Keyed by id. `placeable` services appear in the build palette;
 // the gate is placed by the level, not the palette.
 export const SERVICES = {
+  // ---- Gate (placed by level) ----
   route53: {
     id: "route53",
     label: "Route 53",
@@ -40,6 +50,7 @@ export const SERVICES = {
       "Route 53 — global DNS front gate. Immune to AZ failures. Wire directly to endpoints in any Availability Zone — drag a wire from here to any ALB or compute tile across the grid.",
   },
 
+  // ---- Net / Edge ----
   alb: {
     id: "alb",
     label: "App Load Balancer",
@@ -52,7 +63,55 @@ export const SERVICES = {
     latency: 3,
     placeable: true,
     blurb:
-      "Application Load Balancer — spreads traffic across targets. Cheap throughput multiplier at L7.",
+      "Application Load Balancer — distributes traffic across targets at L7. Cheap throughput multiplier; place between Route 53 and compute.",
+  },
+
+  cloudfront: {
+    id: "cloudfront",
+    label: "CloudFront",
+    short: "CDN",
+    emoji: "☁️",
+    role: ROLE.EDGE,
+    color: "#ff6b6b",
+    cost: 80,
+    throughput: 120,
+    latency: 1,
+    transferCostMul: 0.2,
+    placeable: true,
+    blurb:
+      "CloudFront CDN — global edge cache. High throughput and 80% cheaper data-transfer than a plain wire. Place before ALB to absorb traffic and cut egress costs.",
+  },
+
+  nat_gateway: {
+    id: "nat_gateway",
+    label: "NAT Gateway",
+    short: "NAT-GW",
+    emoji: "🌐",
+    role: ROLE.EDGE,
+    color: "#f77f00",
+    cost: 100,
+    throughput: 50,
+    latency: 3,
+    transferCostMul: 8,
+    placeable: true,
+    blurb:
+      "NAT Gateway — routes private subnets to the internet. 8× data-transfer cost per hop. This is the 'leaky pipe' — replace with a VPC Endpoint for traffic destined for S3 or DynamoDB.",
+  },
+
+  vpc_endpoint: {
+    id: "vpc_endpoint",
+    label: "VPC Endpoint",
+    short: "VPCE",
+    emoji: "🔗",
+    role: ROLE.EDGE,
+    color: "#4cc9f0",
+    cost: 40,
+    throughput: 80,
+    latency: 1,
+    transferCostMul: 0.02,
+    placeable: true,
+    blurb:
+      "VPC Endpoint (Gateway) — private path to S3/DynamoDB inside AWS. Near-zero data-transfer cost. Replaces NAT Gateway for AWS-internal traffic and plugs the money leak.",
   },
 
   cache: {
@@ -67,9 +126,43 @@ export const SERVICES = {
     latency: 1,
     placeable: true,
     blurb:
-      "ElastiCache — in-memory cache. Slashes latency for hot reads before they ever hit the DB.",
+      "ElastiCache — in-memory cache. Slashes latency for hot reads before they hit the DB. Pair with RDS to offload read traffic.",
   },
 
+  // ---- Security ----
+  waf: {
+    id: "waf",
+    label: "AWS WAF",
+    short: "WAF",
+    emoji: "🛡️",
+    role: ROLE.EDGE,
+    color: "#e63946",
+    cost: 60,
+    throughput: 80,
+    latency: 2,
+    attackMitigation: 0.5,
+    placeable: true,
+    blurb:
+      "AWS WAF — web application firewall. Cuts the effective spawn rate during traffic spikes and DDoS events by 50%. Wire before your ALB.",
+  },
+
+  shield: {
+    id: "shield",
+    label: "AWS Shield",
+    short: "Shield",
+    emoji: "🔰",
+    role: ROLE.EDGE,
+    color: "#2d6a4f",
+    cost: 200,
+    throughput: 999,
+    latency: 0,
+    attackMitigation: 0.75,
+    placeable: true,
+    blurb:
+      "AWS Shield Advanced — premium DDoS protection. Absorbs 75% of any traffic spike excess, protecting upstream services. Expensive but essential during a DDoS wave.",
+  },
+
+  // ---- Compute ----
   ec2: {
     id: "ec2",
     label: "EC2 / Auto Scaling",
@@ -82,7 +175,7 @@ export const SERVICES = {
     latency: 6,
     placeable: true,
     blurb:
-      "EC2 + Auto Scaling Group — your workhorse fleet. Steady throughput; scales with the wave (Phase 2).",
+      "EC2 + Auto Scaling Group — workhorse fleet. Steady throughput; add more EC2 tiles to scale horizontally.",
   },
 
   lambda: {
@@ -97,7 +190,39 @@ export const SERVICES = {
     latency: 4,
     placeable: true,
     blurb:
-      "Lambda — serverless functions. Pay-per-use compute; bursts well, no idle cost.",
+      "Lambda — serverless functions. Pay-per-use; bursts well with no idle cost. Lower throughput than EC2 but cheaper for spiky workloads.",
+  },
+
+  kinesis_streams: {
+    id: "kinesis_streams",
+    label: "Kinesis Streams",
+    short: "Streams",
+    emoji: "🌊",
+    role: ROLE.COMPUTE,
+    color: "#7209b7",
+    cost: 90,
+    throughput: 100,
+    latency: 2,
+    replayable: true,
+    placeable: true,
+    blurb:
+      "Kinesis Data Streams — replayable event stream. 24h default retention (up to 365 days). Use when downstream consumers need to re-read data. High throughput for analytics pipelines.",
+  },
+
+  // ---- Data / Storage ----
+  kinesis_firehose: {
+    id: "kinesis_firehose",
+    label: "Kinesis Firehose",
+    short: "Firehose",
+    emoji: "🚒",
+    role: ROLE.SINK,
+    color: "#f72585",
+    cost: 50,
+    throughput: 120,
+    latency: 6,
+    placeable: true,
+    blurb:
+      "Kinesis Firehose — reliable delivery to S3/Redshift. Very high throughput but NO replay: once delivered the stream is gone. Pair with Streams if you need replay upstream.",
   },
 
   s3: {
@@ -112,9 +237,10 @@ export const SERVICES = {
     latency: 5,
     placeable: true,
     blurb:
-      "S3 — object storage. Durable, cheap. Valid request destination for static/object reads.",
+      "S3 — durable object storage. Valid request destination for static/object reads. Cheapest sink; combine with Firehose for streaming data lakes.",
   },
 
+  // ---- Database ----
   rds: {
     id: "rds",
     label: "RDS",
@@ -127,7 +253,38 @@ export const SERVICES = {
     latency: 9,
     placeable: true,
     blurb:
-      "RDS — managed relational database. A request SINK: trips must reach a database and return.",
+      "RDS — managed relational database. Standard single-AZ instance. Upgrade to Multi-AZ for automatic failover or add a Read Replica for cheap read offloading.",
+  },
+
+  rds_multiaz: {
+    id: "rds_multiaz",
+    label: "RDS Multi-AZ",
+    short: "RDS-MAZ",
+    emoji: "🔄",
+    role: ROLE.SINK,
+    color: "#1d3557",
+    cost: 280,
+    throughput: 20,
+    latency: 9,
+    azResilient: true,
+    placeable: true,
+    blurb:
+      "RDS Multi-AZ — synchronous standby in a second AZ. Auto-promotes on AZ failure. Does NOT improve throughput (same single-writer). Worth the cost for critical OLTP workloads.",
+  },
+
+  rds_replica: {
+    id: "rds_replica",
+    label: "RDS Read Replica",
+    short: "Replica",
+    emoji: "📖",
+    role: ROLE.SINK,
+    color: "#457b9d",
+    cost: 80,
+    throughput: 20,
+    latency: 9,
+    placeable: true,
+    blurb:
+      "RDS Read Replica — asynchronous read-only copy (can be in a different AZ). Offloads reads cheaply but does NOT auto-promote on AZ failure. Same-AZ replica = free cross-AZ read traffic.",
   },
 
   dynamodb: {
@@ -142,40 +299,72 @@ export const SERVICES = {
     latency: 2,
     placeable: true,
     blurb:
-      "DynamoDB — managed NoSQL. A request SINK with very high throughput and single-digit latency.",
+      "DynamoDB — managed NoSQL. Very high throughput with single-digit millisecond latency. Pairs well with DAX for hot-key caching.",
+  },
+
+  aurora_sv2: {
+    id: "aurora_sv2",
+    label: "Aurora Serverless v2",
+    short: "Aur-SV2",
+    emoji: "🔆",
+    role: ROLE.SINK,
+    color: "#06d6a0",
+    cost: 180,
+    throughput: 45,
+    latency: 5,
+    autoScale: true,
+    placeable: true,
+    blurb:
+      "Aurora Serverless v2 — vertical auto-scaling (ACUs). Handles spikes by scaling up automatically, up to 2× base throughput. One writer; best for unpredictable workloads. Cannot scale past a ceiling.",
+  },
+
+  aurora_limitless: {
+    id: "aurora_limitless",
+    label: "Aurora Limitless",
+    short: "Limitless",
+    emoji: "♾️",
+    role: ROLE.SINK,
+    color: "#118ab2",
+    cost: 350,
+    throughput: 200,
+    latency: 4,
+    placeable: true,
+    blurb:
+      "Aurora Limitless — horizontal sharding (distributed writer). Breaks the single-writer ceiling by sharding across nodes. Very high cost; use only when Serverless v2 auto-scaling ceiling is hit.",
   },
 };
 
-// Ordered list for the build palette (gate excluded — level places it).
-export const PALETTE_ORDER = [
-  "alb",
-  "cache",
-  "ec2",
-  "lambda",
-  "s3",
-  "rds",
-  "dynamodb",
+// Palette groups — drives the category-tab palette UI.
+// Each group appears as a tab; its `ids` are shown in the service row.
+export const PALETTE_GROUPS = [
+  { id: "net",      label: "Net",      ids: ["alb", "cloudfront", "nat_gateway", "vpc_endpoint", "cache"] },
+  { id: "compute",  label: "Compute",  ids: ["ec2", "lambda", "kinesis_streams"] },
+  { id: "data",     label: "Data",     ids: ["kinesis_firehose", "s3"] },
+  { id: "database", label: "DB",       ids: ["rds", "rds_multiaz", "rds_replica", "dynamodb", "aurora_sv2", "aurora_limitless"] },
+  { id: "security", label: "Security", ids: ["waf", "shield"] },
 ];
+
+// Flat ordered list (all placeable services) — kept for smoke tests / iteration.
+export const PALETTE_ORDER = PALETTE_GROUPS.flatMap((g) => g.ids);
 
 // Roles that a completed request may terminate at (its "database/sink").
 export const SINK_ROLES = new Set([ROLE.SINK, ROLE.STORAGE]);
 
 // Connection rule: which role can wire to which. Symmetric helper below.
-// Kept permissive in Phase 1 (build/route focus); Phase 3 puzzles tighten this.
-// Disallowed today: gate<->gate and sink<->sink direct links (forces real topology).
+// Kept permissive (build/route focus); Phase 5 typed-connections tighten this.
+// Disallowed: gate<->gate and sink<->sink direct links (forces real topology).
 const CONNECT = {
-  [ROLE.GATE]: new Set([ROLE.EDGE, ROLE.COMPUTE]),
-  [ROLE.EDGE]: new Set([ROLE.GATE, ROLE.EDGE, ROLE.COMPUTE, ROLE.STORAGE, ROLE.SINK]),
+  [ROLE.GATE]:    new Set([ROLE.EDGE, ROLE.COMPUTE]),
+  [ROLE.EDGE]:    new Set([ROLE.GATE, ROLE.EDGE, ROLE.COMPUTE, ROLE.STORAGE, ROLE.SINK]),
   [ROLE.COMPUTE]: new Set([ROLE.GATE, ROLE.EDGE, ROLE.COMPUTE, ROLE.STORAGE, ROLE.SINK]),
   [ROLE.STORAGE]: new Set([ROLE.EDGE, ROLE.COMPUTE]),
-  [ROLE.SINK]: new Set([ROLE.EDGE, ROLE.COMPUTE]),
+  [ROLE.SINK]:    new Set([ROLE.EDGE, ROLE.COMPUTE]),
 };
 
 export function canConnect(roleA, roleB) {
   const a = CONNECT[roleA];
   const b = CONNECT[roleB];
   if (!a || !b) return false;
-  // Require mutual compatibility so the rule reads the same from either tile.
   return a.has(roleB) && b.has(roleA);
 }
 

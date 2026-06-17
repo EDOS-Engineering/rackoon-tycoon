@@ -67,7 +67,12 @@ export class LoadModel {
         b.dropping = false;
         continue;
       }
-      const cap = Math.max(1, b.service.throughput);
+      // autoScale (Aurora Serverless v2): effective capacity scales with demand
+      // up to 2× the base throughput, simulating ACU vertical auto-scaling.
+      const baseCap = Math.max(1, b.service.throughput);
+      const cap = b.service.autoScale
+        ? Math.min(baseCap * 2, Math.max(baseCap, (this._demand.get(keyOf(b)) || 0) * 1.1))
+        : baseCap;
       const demand = this._demand.get(keyOf(b)) || 0;
       const load = demand / cap;
       if (b.load == null) b.load = 0;

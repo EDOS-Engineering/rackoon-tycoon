@@ -112,6 +112,23 @@ const diff = await page.evaluate(() => {
 await page.waitForTimeout(400);
 await page.screenshot({ path: "tooling/shot-difficulty.png" }); // briefing on Principal tier
 
+// --- Sprint 3b: catalog breadth --- verify new service properties are present.
+const catalog3b = await page.evaluate(async () => {
+  const cat = await import("./src/services/catalog.js");
+  const S = cat.SERVICES;
+  return {
+    natTransferMul:    S.nat_gateway?.transferCostMul,   // should be 8
+    vpceTransferMul:   S.vpc_endpoint?.transferCostMul,  // should be 0.02
+    wafMitigation:     S.waf?.attackMitigation,          // should be 0.5
+    shieldMitigation:  S.shield?.attackMitigation,       // should be 0.75
+    rdsMAZResilient:   S.rds_multiaz?.azResilient,       // should be true
+    aurSV2AutoScale:   S.aurora_sv2?.autoScale,          // should be true
+    streamsReplayable: S.kinesis_streams?.replayable,    // should be true
+    groupCount:        cat.PALETTE_GROUPS.length,        // should be 5
+    allIds: cat.PALETTE_ORDER.length,                    // all placeable services
+  };
+});
+
 // --- Route 53 global: AZ immunity + cross-AZ wiring ---
 // The current scene is first_light on Principal difficulty (briefing up, not started).
 const r53 = await page.evaluate(async () => {
@@ -151,6 +168,7 @@ console.log("begin:", JSON.stringify(begin));
 console.log("playing:", JSON.stringify(playing));
 console.log("diagonal:", JSON.stringify(diag));
 console.log("difficulty:", JSON.stringify(diff));
+console.log("catalog3b:", JSON.stringify(catalog3b));
 console.log("r53 global:", JSON.stringify(r53));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -174,6 +192,14 @@ if (!(diff.budget < diff.baseBudget)) problems.push("Principal did not tighten b
 if (!r53.rawZoneDisabled) problems.push("test setup: zone 0 should be flagged failed");
 if (r53.gateWouldBeDisabled) problems.push("Route 53 gate was disabled by an AZ failure (should be immune)");
 if (!r53.crossAzWireAllowed) problems.push("Route 53 cross-AZ wiring blocked (gate should reach any AZ)");
+if (catalog3b.natTransferMul !== 8)    problems.push("NAT Gateway transferCostMul should be 8");
+if (catalog3b.vpceTransferMul !== 0.02) problems.push("VPC Endpoint transferCostMul should be 0.02");
+if (catalog3b.wafMitigation !== 0.5)   problems.push("WAF attackMitigation should be 0.5");
+if (catalog3b.shieldMitigation !== 0.75) problems.push("Shield attackMitigation should be 0.75");
+if (!catalog3b.rdsMAZResilient)        problems.push("RDS Multi-AZ azResilient should be true");
+if (!catalog3b.aurSV2AutoScale)        problems.push("Aurora SV2 autoScale should be true");
+if (!catalog3b.streamsReplayable)      problems.push("Kinesis Streams replayable should be true");
+if (catalog3b.groupCount !== 5)        problems.push("PALETTE_GROUPS should have 5 groups");
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 
 process.exit(errors.length || problems.length ? 1 : 0);
