@@ -96,7 +96,14 @@ export class LevelScene extends Scene {
     cam.centerOn(this.grid.worldWidth() / 2, this.grid.worldHeight() / 2);
     this._fitZoom();
 
-    this.introTimer = 6; // show the intro banner for a few seconds
+    // ---- Briefing / intro-grace (Phase 2 polish) ----
+    // The live sim (waves, bill, spawns) stays paused until the player presses
+    // Begin, so the briefing can be read in full and the board pre-built calmly.
+    this.started = false;
+    this.briefingTime = 0; // counts up while the briefing is shown
+    this.briefingAutoStart = 45; // failsafe: auto-begin after this long
+    this.showHelp = false; // legend overlay (toggled with H)
+    this._beginRect = null; // Begin button hit-box (set during render)
   }
 
   _fitZoom() {
@@ -112,11 +119,17 @@ export class LevelScene extends Scene {
   // -------------------------------------------------------------------------
   update(dt) {
     this.time += dt;
-    if (this.introTimer > 0) this.introTimer -= dt;
     const input = this.game.input;
     const cam = this.game.camera;
     const W = this.game.canvas.cssW;
     const H = this.game.canvas.cssH;
+
+    // Help legend (H) freezes the scene while it's open so it can be read safely.
+    if (input.pressed("KeyH")) this.showHelp = !this.showHelp;
+    if (this.showHelp) {
+      if (input.pressed("Escape")) this.showHelp = false;
+      return;
+    }
 
     // ESC returns to title.
     if (input.pressed("Escape")) {
@@ -173,7 +186,11 @@ export class LevelScene extends Scene {
     }
 
     // ---- Pointer → tile picking ----
-    const overUI = this.palette.isOver(input.x, input.y);
+    // While the briefing is up, its card also blocks world clicks so reading or
+    // pressing Begin never accidentally places a building on the board behind it.
+    const overBriefing =
+      !this.started && this._hitRect(this._briefingRect, input.x, input.y);
+    const overUI = this.palette.isOver(input.x, input.y) || overBriefing;
     this.palette.updateHover(input.x, input.y, dt);
 
     const world = cam.screenToWorld(input.x, input.y);
@@ -197,12 +214,27 @@ export class LevelScene extends Scene {
       this._tryCutWireNear(this.hoverTile.col, this.hoverTile.row, world);
     }
 
-    // ---- Phase 2: drive waves + events + the live bill ----
-    this._tickSystems(dt);
+    // ---- Begin the round when the briefing is dismissed (intro-grace). The
+    // player can pan/build during the briefing; only this flips the sim on. ----
+    if (!this.started) {
+      this.briefingTime += dt;
+      const beginClicked =
+        this._beginRect &&
+        this._hitRect(this._beginRect, input.x, input.y) &&
+        input.leftDown;
+      if (
+        input.pressed("Enter") ||
+        input.pressed("Space") ||
+        beginClicked ||
+        this.briefingTime >= this.briefingAutoStart
+      ) {
+        this.started = true;
+      }
+    }
 
-    // ---- Recompute route validity if topology changed (or AZ state shifted).
-    // Disabled tiles (AZ failure) are excluded from routing, so an outage can
-    // invalidate the live route until the player has a resilient alternative. ----
+    // ---- Recompute route validity (during the briefing too, so the topology
+    // indicator + build ghost stay live while you set up). Disabled tiles (AZ
+    // failure) are excluded, so an outage invalidates a single-zone route. ----
     if (this._routeDirty) {
       const blocked = (key) => this._isKeyDisabled(key);
       this.routeOk = this.gateKeys.some((gk) =>
@@ -211,33 +243,44 @@ export class LevelScene extends Scene {
       this._routeDirty = false;
     }
 
-    // ---- Spawn loop (rate scaled by the current wave + any traffic spike) ----
-    if (this.routeOk) {
-      const rate =
-        this.level.spawnRate *
-        this.waves.multiplier() *
-        this.events.spawnMultiplier();
-      this._spawnAcc += dt * rate;
-      while (this._spawnAcc >= 1) {
-        this._spawnAcc -= 1;
-        this._spawnPacket();
+    // ---- The live sim (waves, bill, spawns, overload, win/lose) runs only once
+    // the shift has begun. ----
+    if (this.started) {
+      this._tickSystems(dt);
+
+      // Spawn loop (rate scaled by the current wave + any traffic spike).
+      if (this.routeOk) {
+        const rate =
+          this.level.spawnRate *
+          this.waves.multiplier() *
+          this.events.spawnMultiplier();
+        this._spawnAcc += dt * rate;
+        while (this._spawnAcc >= 1) {
+          this._spawnAcc -= 1;
+          this._spawnPacket();
+        }
+      } else {
+        this._spawnAcc = 0;
       }
-    } else {
-      this._spawnAcc = 0;
+
+      // Per-building load / overload from in-flight demand (T2.2).
+      this.loadModel.measure(this.grid, this.packets);
+      this.loadModel.update(this.grid, dt);
+
+      // Advance packets.
+      this._updatePackets(dt);
+
+      // Evaluate win/lose every step.
+      this._checkOutcome();
     }
 
-    // ---- Per-building load / overload from in-flight demand (T2.2) ----
-    this.loadModel.measure(this.grid, this.packets);
-    this.loadModel.update(this.grid, dt);
-
-    // ---- Advance packets ----
-    this._updatePackets(dt);
-
-    // ---- Building idle animation (bob + eyes glance toward nearest packet) ----
+    // ---- Building idle animation (always, so the world keeps breathing). ----
     this._animateBuildings(dt);
+  }
 
-    // ---- Evaluate win/lose every step ----
-    this._checkOutcome();
+  // Screen-space rect hit test.
+  _hitRect(r, x, y) {
+    return r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   }
 
   // Tick the wave scheduler, event director, and bill meter; reconcile the AZ
@@ -713,22 +756,29 @@ export class LevelScene extends Scene {
     // Telegraphed event warning / active banner (T2.3).
     drawEventBanner(ctx, W, this.events.banner());
 
+    // Persistent one-line objective (always visible, top-center) — keeps the
+    // core goal + flow on screen after the briefing closes.
+    this._renderObjective(ctx, W);
+
     // Control hints.
     drawHints(
       ctx,
       W,
       H,
-      "Build: click a tile  •  Wire: drag between neighbors  •  Cut: right-click wire  •  Watch your burn + bottlenecks  •  Esc: menu"
+      "Build: click a tile  •  Wire: drag between neighbors  •  Cut: right-click wire  •  H: help  •  Esc: menu"
     );
 
-    // Intro banner.
-    if (this.introTimer > 0) this._renderIntro(ctx, W, H);
+    // Briefing overlay — stays up (sim paused) until the shift begins.
+    if (!this.started) this._renderBriefing(ctx, W, H);
 
-    // "End round" button (give up / cash out early to the report).
+    // "Cash out" button (end early to the report) — only once the shift is on.
     this._renderEndButton(ctx, W, H);
 
     // Win/lose overlay once the round is decided (T2.4).
     if (this.outcome !== OUTCOME.PLAYING) this._renderOutcome(ctx, W, H);
+
+    // Help legend on top of everything when toggled (H).
+    if (this.showHelp) this._renderHelp(ctx, W, H);
   }
 
   // Full-screen-ish verdict card shown for the brief end-of-round beat.
@@ -829,41 +879,178 @@ export class LevelScene extends Scene {
     }
   }
 
-  _renderIntro(ctx, W, H) {
-    const a = Math.min(1, this.introTimer / 1.5);
-    const lines = wrapText(this.level.intro, 56);
-    const w = 560;
-    const h = 70 + lines.length * 18;
+  // Briefing card shown until the shift begins (sim paused). Honors explicit
+  // line breaks in the intro, dims the board, and offers a Begin button.
+  _renderBriefing(ctx, W, H) {
+    const a = Math.min(1, this.briefingTime / 0.4); // gentle fade-in
+    const paras = String(this.level.intro || "").split("\n");
+    const lines = [];
+    for (const p of paras) {
+      if (p.trim() === "") {
+        lines.push("");
+        continue;
+      }
+      for (const ln of wrapText(p, 64)) lines.push(ln);
+    }
+    const w = 600;
+    const pad = 22;
+    const titleH = 38;
+    const bodyH = lines.length * 18;
+    const btnH = 46;
+    const h = pad * 2 + titleH + bodyH + btnH + 18;
     const x = W / 2 - w / 2;
-    const y = 86;
+    const y = Math.max(64, H / 2 - h / 2);
+    this._briefingRect = { x, y, w, h };
+
     ctx.save();
     ctx.globalAlpha = a;
-    ctx.fillStyle = "rgba(18,24,32,0.92)";
-    roundRect(ctx, x, y, w, h, 14);
+
+    // Dim backdrop to focus the read.
+    ctx.fillStyle = "rgba(8,11,15,0.5)";
+    ctx.fillRect(0, 0, W, H);
+
+    // Card.
+    ctx.fillStyle = "rgba(18,24,32,0.97)";
+    roundRect(ctx, x, y, w, h, 16);
     ctx.fill();
     ctx.strokeStyle = PALETTE.accent;
     ctx.lineWidth = 1.5;
-    roundRect(ctx, x, y, w, h, 14);
+    roundRect(ctx, x, y, w, h, 16);
+    ctx.stroke();
+
+    // Title.
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = PALETTE.accent;
+    ctx.font = FONT.uiBig;
+    ctx.fillText("🦝  " + this.level.name, x + pad, y + pad);
+
+    // Body.
+    ctx.font = FONT.uiSmall;
+    ctx.fillStyle = PALETTE.textDim;
+    let ty = y + pad + titleH;
+    for (const ln of lines) {
+      if (ln) ctx.fillText(ln, x + pad, ty);
+      ty += 18;
+    }
+
+    // Begin button.
+    const bw = 200;
+    const bh = 40;
+    const bx = W / 2 - bw / 2;
+    const by = y + h - pad - bh;
+    this._beginRect = { x: bx, y: by, w: bw, h: bh };
+    const over = this._hitRect(this._beginRect, this.game.input.x, this.game.input.y);
+    ctx.fillStyle = over ? PALETTE.accent : "#e09a2e";
+    roundRect(ctx, bx, by, bw, bh, 12);
+    ctx.fill();
+    ctx.fillStyle = "#1a120a";
+    ctx.font = "800 18px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("▶  Begin shift", W / 2, by + bh / 2 + 1);
+
+    // Keyboard hint.
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.font = FONT.uiSmall;
+    ctx.textBaseline = "top";
+    ctx.fillText(
+      "Press Enter / Space to begin  •  H for help  •  you can build while you read",
+      W / 2,
+      by + bh + 8
+    );
+    ctx.restore();
+  }
+
+  // Slim always-on objective reminder (top-center) so the goal + flow stay clear.
+  _renderObjective(ctx, W) {
+    if (!this.started && this.briefingTime < 0.3) return; // let the card own the first beat
+    const goal = this.level.goalRequests ? this.level.goalRequests : "∞";
+    const txt =
+      "🎯 Route " + this.success + " / " + goal + "   ·   gate → compute → database";
+    ctx.save();
+    ctx.font = FONT.uiSmall;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const w = ctx.measureText(txt).width + 28;
+    const h = 24;
+    const x = W / 2 - w / 2;
+    const y = 12;
+    ctx.fillStyle = "rgba(18,24,32,0.85)";
+    roundRect(ctx, x, y, w, h, 12);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,179,71,0.25)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, x, y, w, h, 12);
+    ctx.stroke();
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.fillText(txt, W / 2, y + h / 2 + 1);
+    ctx.restore();
+  }
+
+  // Help legend overlay (toggled with H; pauses the scene while open).
+  _renderHelp(ctx, W, H) {
+    ctx.save();
+    ctx.fillStyle = "rgba(8,11,15,0.74)";
+    ctx.fillRect(0, 0, W, H);
+
+    const w = 580;
+    const rows = [
+      ["🎯", "Goal", "Route the target number of guests: gate → compute → database → back."],
+      ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag between neighbours to wire; right-click a wire to cut."],
+      ["💰", "AWS bill", "Buildings and data transfer burn your budget over time (top-left). Don't let it hit $0."],
+      ["📈", "Waves", "Traffic ramps up in phases (top-right). Add capacity before the peaks arrive."],
+      ["🔥", "Overload", "A building past its throughput queues up — latency climbs, then it drops guests. Watch the hot tiles."],
+      ["🗺️", "Zones", "The board spans AZ bands (us-rk-1a/b/c). A zone can fail and disable its tiles — spread compute & DBs across zones."],
+      ["⭐", "Score", "Stars reward uptime, cost-efficiency, and resilience. Win to unlock the next level."],
+    ];
+    const rowH = 48;
+    const h = 96 + rows.length * rowH;
+    const x = W / 2 - w / 2;
+    const y = Math.max(24, H / 2 - h / 2);
+
+    ctx.fillStyle = "rgba(18,24,32,0.98)";
+    roundRect(ctx, x, y, w, h, 16);
+    ctx.fill();
+    ctx.strokeStyle = PALETTE.accent;
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, x, y, w, h, 16);
     ctx.stroke();
 
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     ctx.fillStyle = PALETTE.accent;
     ctx.font = FONT.uiBig;
-    ctx.fillText("🦝  " + this.level.name, x + 18, y + 14);
-    ctx.fillStyle = PALETTE.textDim;
-    ctx.font = FONT.uiSmall;
-    let ty = y + 46;
-    for (const ln of lines) {
-      ctx.fillText(ln, x + 18, ty);
-      ty += 18;
+    ctx.fillText("How to play", x + 24, y + 22);
+
+    let ry = y + 62;
+    for (const [icon, label, desc] of rows) {
+      ctx.font = "20px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.text;
+      ctx.fillText(icon, x + 24, ry);
+      ctx.font = "700 13px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.text;
+      ctx.fillText(label, x + 58, ry);
+      ctx.font = FONT.uiSmall;
+      ctx.fillStyle = PALETTE.textDim;
+      let dy = ry + 16;
+      for (const ln of wrapText(desc, 60)) {
+        ctx.fillText(ln, x + 58, dy);
+        dy += 15;
+      }
+      ry += rowH;
     }
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.font = FONT.uiSmall;
+    ctx.fillText("Press H or Esc to close", W / 2, y + h - 24);
     ctx.restore();
   }
 
   _renderEndButton(ctx, W, H) {
-    // Hidden once the round has resolved (the verdict overlay takes over).
-    if (this.outcome !== OUTCOME.PLAYING) return;
+    // Hidden during the briefing, and once the round has resolved.
+    if (!this.started || this.outcome !== OUTCOME.PLAYING) return;
     const w = 130;
     const h = 30;
     const x = W - w - 14;

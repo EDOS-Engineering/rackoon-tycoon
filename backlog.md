@@ -3,11 +3,11 @@
 > **Build your cloud empire. Tame the traffic.**
 > AWS SAA-C03 study guide reborn as a browser game. **Factorio meets RollerCoaster Tycoon.**
 
-**Status:** Phase 1 ✅ **complete** — playable core built and verified in headless Chromium (0 console/page errors, 60fps). Phase 2 (economy / waves / win-lose) is next. Approved stack: zero-dep vanilla. Build agent: Opus.
+**Status:** Phase 2 ✅ **complete & tuned** — live AWS bill, wave scheduler, AZ-failure/traffic-spike/cost-audit events, per-building overload (queue→latency→drops), win/lose + 3-pillar star scoring, localStorage progress/unlocks, title-screen level select, and 3 campaign levels. Playtested + headless-verified (0 errors). Phase 3 (gap-puzzle boss levels) is next. Stack: zero-dep vanilla.
 
 ## Progress log
-- **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (3 commits, no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred to a clean stopping point so it doesn't break an open editor/session).
-- Phase 2 entry points are documented in `game/README.md` → "Extension hooks": `levelScene._updatePackets()` (`HOOK:` markers), `levels.js` (add `waves`/`events`/win-lose), `catalog.js` (`throughput`/`latency` already present for the bill + overload sim).
+- **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
+- **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 
 ---
 
@@ -92,16 +92,16 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 
 > **End of Phase 1:** ✅ place services, wire them, watch guests flow, earn/lose. Committed (`b0acd18`), verified headless.
 
-### 🟡 PHASE 2 — Economy, waves, lose/win (Sprint 2)
+### ✅ PHASE 2 — Economy, waves, lose/win (Sprint 2) — COMPLETE
 
 **Sprint 2 — Pressure & stakes**
-- [ ] T2.1 Budget + live **AWS bill meter** (per-tile running cost, data-transfer costs between tiles).
-- [ ] T2.2 Wave scheduler: escalating traffic surges; throughput overload → latency → drops.
-- [ ] T2.3 Events: AZ failure, traffic spike, cost audit. Telegraphed with warnings.
-- [ ] T2.4 Win/lose conditions, score, star rating (uptime × cost-efficiency × resilience).
-- [ ] T2.5 Results screen + `localStorage` save/load + progress unlocks.
+- [x] T2.1 Budget + live **AWS bill meter** (per-tile running cost, data-transfer costs between tiles). → `economy/billing.js`
+- [x] T2.2 Wave scheduler: escalating traffic surges; throughput overload → latency → drops. → `waves/scheduler.js`, `waves/load.js`
+- [x] T2.3 Events: AZ failure, traffic spike, cost audit. Telegraphed with warnings. → `waves/events.js`
+- [x] T2.4 Win/lose conditions, score, star rating (uptime × cost-efficiency × resilience). → `economy/scoring.js`
+- [x] T2.5 Results screen + `localStorage` save/load + progress unlocks. → `scenes/resultsScene.js`, `save/progress.js`, `scenes/titleScene.js`
 
-> **End of Phase 2:** a real game loop with stakes. Commit.
+> **End of Phase 2:** ✅ a real game loop with stakes — committed, playtested, and tuned (intro-grace briefing, gentler economy, H help legend).
 
 ### 🟠 PHASE 3 — Learning puzzles / boss gaps (Sprint 3)
 

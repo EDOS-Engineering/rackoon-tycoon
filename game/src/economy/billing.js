@@ -11,12 +11,13 @@
 // sim step, subtracts the returned spend from its budget, and reads burnRate /
 // breakdown for the HUD + results. No rendering, no input here.
 
-// Tunables. RATE_DIVISOR converts a building's provision `cost` into a
-// per-second burn (cost / DIVISOR dollars per second). With the default a $120
-// EC2 burns $2/s, an $0 gate burns nothing — gentle enough for a 3–6 min level.
+// Tunables. rateDivisor converts a building's provision `cost` into a per-second
+// burn (cost / divisor dollars per second). Tuned gentle so a sensible build
+// comfortably outlasts a 3–6 min level: a $120 EC2 burns ~$0.9/s, a $0 gate
+// nothing. Transfer is a small per-hop egress nibble, not a budget-killer.
 export const BILL = {
-  rateDivisor: 60, // cost -> $/sec running burn
-  transferPerHop: 0.04, // $ per packet per wire hop crossed
+  rateDivisor: 130, // cost -> $/sec running burn (higher = gentler)
+  transferPerHop: 0.015, // $ per packet per wire hop crossed
   auditMultiplier: 1.0, // mutated by the "cost audit" event
 };
 
