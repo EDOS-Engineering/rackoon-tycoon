@@ -13,6 +13,8 @@ import { BillMeter } from "../game/src/economy/billing.js";
 import { WaveScheduler } from "../game/src/waves/scheduler.js";
 import { Grid } from "../game/src/grid/grid.js";
 import { SERVICES } from "../game/src/services/catalog.js";
+import { Simulation } from "../game/src/sim/simulation.js";
+import { getLevel } from "../game/src/levels/levels.js";
 
 const problems = [];
 
@@ -62,8 +64,67 @@ for (let i = 0; i < 600; i++) {
 if (nanSeen) problems.push("bill produced NaN during the headless run");
 if (!(bill.totalSpent > 0)) problems.push("bill should accrue running cost over a run");
 
+// 4. The composed Simulation core (Phase 7 R1) fast-runs headlessly: build a
+//    legal gate→ALB→EC2→RDS route on a real level, seed the rng, and step ~40s
+//    of compressed sim time. Same seed → identical (success, failed, budget);
+//    a different seed (almost surely) differs. This is the surface that R3/R4/R5
+//    balancing hangs off — the whole reason for the extraction.
+function runLevel(levelId, seed, steps = 2400) {
+  const level = getLevel(levelId);
+  const grid = new Grid(level.cols, level.rows);
+  const gateKeys = [];
+  for (const gt of level.gates) {
+    grid.place(SERVICES.route53, gt.col, gt.row);
+    gateKeys.push(Grid.key(gt.col, gt.row));
+  }
+  for (const s of level.seed || []) {
+    const svc = SERVICES[s.id];
+    if (svc) grid.place(svc, s.col, s.row);
+  }
+  // A simple legal route from the first gate: gate → ALB → EC2 → RDS, wired in
+  // a line just to the right of the gate (wires are any-distance).
+  const [gc, gr] = Grid.parseKey(gateKeys[0]);
+  grid.place(SERVICES.alb, gc + 1, gr);
+  grid.place(SERVICES.ec2, gc + 2, gr);
+  grid.place(SERVICES.rds, gc + 3, gr);
+  grid.addEdge(Grid.key(gc, gr), Grid.key(gc + 1, gr));
+  grid.addEdge(Grid.key(gc + 1, gr), Grid.key(gc + 2, gr));
+  grid.addEdge(Grid.key(gc + 2, gr), Grid.key(gc + 3, gr));
+
+  const sim = new Simulation({ level, grid, gateKeys, rng: makeRng(seed), budget: level.budget });
+  let nan = false;
+  for (let i = 0; i < steps; i++) {
+    sim.recomputeRoute();
+    sim.step(1 / 60);
+    sim.drainEmitted(); // headless host ignores audio/float cues
+    if (Number.isNaN(sim.budget) || Number.isNaN(sim.revenue)) { nan = true; break; }
+  }
+  return {
+    success: sim.success,
+    failed: sim.failed,
+    budget: Math.round(sim.budget),
+    bill: +sim.bill.totalSpent.toFixed(2),
+    outcome: sim.outcome,
+    nan,
+  };
+}
+
+const simA = runLevel("first_light", 4242);
+const simB = runLevel("first_light", 4242);
+if (simA.nan) problems.push("Simulation produced NaN during a headless run");
+// Strict determinism is the R1 guarantee: a seeded composed run replays exactly.
+// (Seed *sensitivity* lives where the rng is actually consumed — incident zones
+// + drop decisions — and is asserted in sections 1 & 2 above. A clean, never-
+// overloaded winning route legitimately produces seed-independent output.)
+if (JSON.stringify(simA) !== JSON.stringify(simB))
+  problems.push("same seed → Simulation run must be byte-identical");
+if (!(simA.success > 0)) problems.push("a legal route should route guests over a headless run");
+if (!(simA.bill > 0)) problems.push("Simulation should accrue a bill over a headless run");
+
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
 console.log("headless run billTotal:", bill.totalSpent.toFixed(2));
+console.log("sim(first_light,4242):", JSON.stringify(simA));
+console.log("sim deterministic:", JSON.stringify(simA) === JSON.stringify(simB));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

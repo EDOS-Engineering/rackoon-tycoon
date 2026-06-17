@@ -15,9 +15,7 @@ import { PALETTE, FONT } from "../theme.js";
 import { Grid, TILE } from "../grid/grid.js";
 import { getLevel } from "../levels/levels.js";
 import { SERVICES, getService, canWire } from "../services/catalog.js";
-import { getConn, connTypeAllows, CONN_ORDER, DEFAULT_CONN } from "../services/connections.js";
-import { findRoundTrip, gateHasRoute } from "../grid/pathfind.js";
-import { Packet } from "../entities/packet.js";
+import { connTypeAllows, CONN_ORDER, DEFAULT_CONN } from "../services/connections.js";
 import { BuildPalette } from "../ui/palette.js";
 import { drawHUD, drawEventBanner } from "../ui/hud.js";
 import {
@@ -31,16 +29,12 @@ import {
 } from "../render/gridRenderer.js";
 import { drawPacket, roundRect, lighten } from "../render/sprites.js";
 import { audio } from "../engine/audio.js";
-// ---- Phase 2: economy, waves, events, scoring -----------------------------
-import { BillMeter, BILL } from "../economy/billing.js";
-import { WaveScheduler } from "../waves/scheduler.js";
-import { LoadModel } from "../waves/load.js";
-import {
-  EventDirector,
-  zoneOfColumn,
-  AZ_COUNT,
-} from "../waves/events.js";
-import { evaluate, score, azSpread, OUTCOME } from "../economy/scoring.js";
+// ---- Phase 7 (R1): the simulation core is now a standalone, headless module.
+// The scene owns rendering + input and drives a Simulation instance; the sim
+// owns the economy/wave/event/load/packet state and the step. ----
+import { Simulation } from "../sim/simulation.js";
+import { zoneOfColumn, AZ_COUNT } from "../waves/events.js";
+import { score, azSpread, OUTCOME } from "../economy/scoring.js";
 import { makeRng } from "../sim/rng.js";
 import { SINK_ROLES, ROLE } from "../services/catalog.js";
 import { getDifficulty } from "../save/difficulty.js";
@@ -49,52 +43,37 @@ export class LevelScene extends Scene {
   enter(payload) {
     const level = getLevel(payload && payload.levelId);
     this.level = level;
-    this.grid = new Grid(level.cols, level.rows);
     this.time = 0;
 
     // Difficulty (Phase 3: T3.8) — tightens budget + speeds up the whole round.
     this.diff = getDifficulty();
     this.speedMul = this.diff.speedMul;
 
-    // Economy / counters.
-    this.budget = Math.round(level.budget * this.diff.budgetMul);
-    this.revenue = 0;
-    this.lost = 0;
-    this.success = 0;
-    this.failed = 0;
+    // Build + seed the grid (gates, pre-placed buildings) before handing it to
+    // the sim, which owns everything that moves.
+    const grid = new Grid(level.cols, level.rows);
+    const gateKeys = [];
+    for (const g of level.gates) {
+      grid.place(SERVICES.route53, g.col, g.row);
+      gateKeys.push(Grid.key(g.col, g.row));
+    }
+    for (const s of level.seed || []) {
+      const svc = getService(s.id);
+      if (svc) grid.place(svc, s.col, s.row);
+    }
 
-    // ---- Phase 2 systems ----
+    // ---- Phase 7 (R1): the simulation core ----
     // Per-run seedable RNG drives all sim-path randomness (incident zones, drop
     // decisions) so a run is reproducible and the headless harness is deterministic.
     this._rng = makeRng();
-    this.bill = new BillMeter();
-    this.waves = new WaveScheduler(level.waves);
-    this.events = new EventDirector(level.events, level.cols, this._rng);
-    this.loadModel = new LoadModel(this._rng);
-    this.outcome = OUTCOME.PLAYING; // PLAYING | WIN | LOSE
-    this._endTimer = 0; // brief pause before flipping to results
-    this._eventsSurvived = 0; // events whose window we fully cleared while alive
-    this._eventsCleared = new Set();
-
-    // Place the gate(s) from the level def.
-    this.gateKeys = [];
-    for (const g of level.gates) {
-      this.grid.place(SERVICES.route53, g.col, g.row);
-      this.gateKeys.push(Grid.key(g.col, g.row));
-    }
-    // Seed any pre-placed buildings.
-    for (const s of level.seed || []) {
-      const svc = getService(s.id);
-      if (svc) this.grid.place(svc, s.col, s.row);
-    }
-
-    // Packets in flight.
-    this.packets = [];
-    this._spawnAcc = 0;
-
-    // Cached route validity (recomputed when topology changes).
-    this.routeOk = false;
-    this._routeDirty = true;
+    this.sim = new Simulation({
+      level,
+      grid,
+      gateKeys,
+      rng: this._rng,
+      budget: Math.round(level.budget * this.diff.budgetMul),
+    });
+    this._endTimer = null; // armed when the outcome flips; null while playing
 
     // Interaction state.
     this.palette = new BuildPalette();
@@ -104,10 +83,6 @@ export class LevelScene extends Scene {
 
     // Particle effects (T4.1): burst on building placement.
     this._particles = [];
-
-    // Win requirement state: tracks whether the current route satisfies the
-    // level's winRequires constraints. Updated in _checkOutcome.
-    this._reqHint = null; // string shown to player when goal is met but reqs aren't
 
     // Sandbox revenue reinvestment slider (T4 fix): controls what fraction of
     // each completed request's revenue flows back into the AWS budget.
@@ -132,6 +107,34 @@ export class LevelScene extends Scene {
     this.connType = DEFAULT_CONN; // active wire connection type (Phase 5: T5.1)
     this.palette.connType = this.connType; // keep palette picker in sync
   }
+
+  // ---- Delegating accessors (Phase 7 R1) ----
+  // The simulation owns this state; the renderer + input handlers read/write it
+  // through `this.X` exactly as before, so nothing downstream had to change.
+  get grid() { return this.sim.grid; }
+  get gateKeys() { return this.sim.gateKeys; }
+  get bill() { return this.sim.bill; }
+  get waves() { return this.sim.waves; }
+  get events() { return this.sim.events; }
+  get loadModel() { return this.sim.loadModel; }
+  get packets() { return this.sim.packets; }
+  get revenue() { return this.sim.revenue; }
+  get lost() { return this.sim.lost; }
+  get success() { return this.sim.success; }
+  get failed() { return this.sim.failed; }
+  get routeOk() { return this.sim.routeOk; }
+  get _reqHint() { return this.sim._reqHint; }
+  get _eventsSurvived() { return this.sim._eventsSurvived; }
+  get budget() { return this.sim.budget; }
+  set budget(v) { this.sim.budget = v; }
+  get outcome() { return this.sim.outcome; }
+  set outcome(v) { this.sim.outcome = v; }
+  get outcomeReason() { return this.sim.outcomeReason; }
+  set outcomeReason(v) { this.sim.outcomeReason = v; }
+  get _routeDirty() { return this.sim._routeDirty; }
+  set _routeDirty(v) { this.sim._routeDirty = v; }
+  get _reinvestRate() { return this.sim._reinvestRate; }
+  set _reinvestRate(v) { this.sim._reinvestRate = v; }
 
   _fitZoom() {
     const cam = this.game.camera;
@@ -183,8 +186,10 @@ export class LevelScene extends Scene {
     }
 
     // ---- Win/lose: once decided, freeze the sim and flip to results after a
-    // short beat so the player sees the final frame (T2.4). ----
+    // short beat so the player sees the final frame (T2.4). The sim flips the
+    // outcome; the scene owns the end-of-round pause + transition. ----
     if (this.outcome !== OUTCOME.PLAYING) {
+      if (this._endTimer == null) this._endTimer = 1.6; // armed on the flip frame
       this._endTimer -= dt;
       if (this._endTimer <= 0) this._goToResults();
       this._animateBuildings(dt); // keep the world breathing under the overlay
@@ -294,58 +299,15 @@ export class LevelScene extends Scene {
     // ---- Recompute route validity (during the briefing too, so the topology
     // indicator + build ghost stay live while you set up). Disabled tiles (AZ
     // failure) are excluded, so an outage invalidates a single-zone route. ----
-    if (this._routeDirty) {
-      // Reconcile structural-dependency flags first so the topology indicator and
-      // the dependency banner are correct even during the briefing (pre-start).
-      for (const b of this.grid.buildings.values()) b.invalid = !this._dependencyMet(b);
-      const blocked = (key) => this._isKeyDisabled(key);
-      this.routeOk = this.gateKeys.some((gk) =>
-        gateHasRoute(this.grid, gk, blocked)
-      );
-      this._routeDirty = false;
-    }
+    this.sim.recomputeRoute();
 
     // ---- The live sim (waves, bill, spawns, overload, win/lose) runs only once
     // the shift has begun. `sdt` is the difficulty-scaled timestep (T3.8): on
     // harder tiers the whole round — waves, spawns, bill, guests — runs faster. ----
     if (this.started) {
       const sdt = dt * this.speedMul;
-      this._tickSystems(sdt);
-
-      // Spawn loop (rate scaled by the current wave + any traffic spike).
-      if (this.routeOk) {
-        // WAF / Shield tiles on the board reduce the effective spike multiplier.
-        // Each attackMitigation value absorbs that fraction of the spike excess.
-        let spikeMul = this.events.spawnMultiplier();
-        if (spikeMul > 1) {
-          for (const b of this.grid.buildings.values()) {
-            if (!b.disabled && b.service.attackMitigation) {
-              spikeMul = 1 + (spikeMul - 1) * (1 - b.service.attackMitigation);
-            }
-          }
-        }
-        const rate =
-          this.level.spawnRate *
-          this.waves.multiplier() *
-          spikeMul;
-        this._spawnAcc += sdt * rate;
-        while (this._spawnAcc >= 1) {
-          this._spawnAcc -= 1;
-          this._spawnPacket();
-        }
-      } else {
-        this._spawnAcc = 0;
-      }
-
-      // Per-building load / overload from in-flight demand (T2.2).
-      this.loadModel.measure(this.grid, this.packets);
-      this.loadModel.update(this.grid, sdt);
-
-      // Advance packets.
-      this._updatePackets(sdt);
-
-      // Evaluate win/lose every step.
-      this._checkOutcome();
+      this.sim.step(sdt);
+      this._drainSim();
     }
 
     // ---- Building idle animation (always, so the world keeps breathing). ----
@@ -355,240 +317,6 @@ export class LevelScene extends Scene {
   // Screen-space rect hit test.
   _hitRect(r, x, y) {
     return r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-  }
-
-  // Tick the wave scheduler, event director, and bill meter; reconcile the AZ
-  // failure state onto buildings; charge running cost against the budget.
-  _tickSystems(dt) {
-    this.waves.tick(dt);
-    this.events.tick(dt);
-
-    // Reflect cost-audit + traffic state into the bill meter.
-    this.bill.auditMul = this.events.billMultiplier();
-
-    // Apply AZ-failure outages to buildings. When the disabled set changes, the
-    // route must be recomputed (and in-flight packets on broken paths dropped).
-    const spotDown = this.events.spotInterrupted();
-    let changed = false;
-    for (const b of this.grid.buildings.values()) {
-      // Route 53 (global) survives everything. A region failure downs the whole
-      // primary region — Multi-AZ does NOT save you there (single-region). An AZ
-      // failure is survived by azResilient (Multi-AZ) tiles. Spot tiles also go
-      // offline during a spot-interruption event.
-      let off;
-      if (b.service.role === ROLE.GATE) off = false;
-      else if (this.events.isTileInFailedRegion(b.col, b.row)) off = true;
-      else if (b.service.azResilient) off = false;
-      else off = this.events.isTileDisabled(b.col, b.row);
-      if (b.service.spotInterruptible && spotDown) off = true;
-      if (off !== b.disabled) {
-        b.disabled = off;
-        changed = true;
-      }
-      // Structural dependency (e.g. a Read Replica needs a source primary on the
-      // board). Recomputed each tick because placing/removing tiles changes it.
-      const invalid = !this._dependencyMet(b);
-      if (invalid !== b.invalid) {
-        b.invalid = invalid;
-        changed = true;
-      }
-    }
-    if (changed) {
-      this._routeDirty = true;
-      this._dropPacketsOnBrokenPaths();
-    }
-
-    // Play a sound the first time each event enters warning or active state (T4.2).
-    for (const e of this.events.events) {
-      if ((e.state === "warning" || e.state === "active") && !e._sounded) {
-        e._sounded = true;
-        if (e.kind === "az_failure" || e.kind === "spot_interruption" || e.kind === "region_failure") audio.play("azFail");
-        else if (e.kind === "traffic_spike") audio.play("spike");
-        else audio.play("alert");
-      }
-    }
-
-    // Track events we've cleared (their window ended while we were still alive)
-    // for the resilience score.
-    for (const e of this.events.events) {
-      if (e.state === "done" && !this._eventsCleared.has(e)) {
-        this._eventsCleared.add(e);
-        this._eventsSurvived++;
-      }
-    }
-
-    // Draw down the budget by the running bill (transfer is billed per-hop in
-    // _updatePackets). Game-over on depletion is handled in _checkOutcome().
-    const spent = this.bill.tick(dt, this.grid);
-    this.budget -= spent;
-    if (this.budget < 0) this.budget = 0;
-  }
-
-  // True if the tile at this "c,r" key cannot currently carry traffic — either
-  // offline (its AZ failed) or structurally invalid (an unmet dependency, e.g. a
-  // Read Replica with no source primary). Gate (Route 53) and azResilient
-  // services are immune to AZ failures, but still subject to dependency rules.
-  _isKeyDisabled(key) {
-    const [c, r] = Grid.parseKey(key);
-    const b = this.grid.getBuilding(c, r);
-    if (b && !this._dependencyMet(b)) return true;
-    if (b && b.service.spotInterruptible && this.events.spotInterrupted()) return true;
-    // Route 53 (gate) is global and survives AZ + region failures.
-    if (b && b.service.role === ROLE.GATE) return false;
-    // A region failure downs the whole primary region — Multi-AZ can't save it.
-    if (this.events.isTileInFailedRegion(c, r)) return true;
-    // An AZ failure is survived by azResilient (Multi-AZ) services.
-    if (b && b.service.azResilient) return false;
-    return this.events.isTileDisabled(c, r);
-  }
-
-  // True if a building's structural dependency (catalog `dependsOn`) is satisfied
-  // by another building present on the board. No dependency → always true.
-  // Models real AWS topology: e.g. an RDS Read Replica must have a source primary.
-  _dependencyMet(b) {
-    const dep = b.service.dependsOn;
-    if (!dep || !dep.anyOf || dep.anyOf.length === 0) return true;
-    for (const other of this.grid.buildings.values()) {
-      if (other === b) continue;
-      if (dep.anyOf.includes(other.service.id)) return true;
-    }
-    return false;
-  }
-
-  // Decide win/lose and arm the brief end-of-round pause.
-  _checkOutcome() {
-    if (this.outcome !== OUTCOME.PLAYING) return;
-    const res = evaluate({
-      budget: this.budget,
-      success: this.success,
-      failed: this.failed,
-      slaMaxDropRate: this.level.slaMaxDropRate,
-      goalRequests: this.level.goalRequests,
-      wavesFinished: this.waves.finished,
-      minRequestsForWin: 1,
-    });
-    if (res.outcome === OUTCOME.WIN) {
-      // Check level-specific service requirements before accepting the win.
-      const reqCheck = this._checkWinRequires();
-      if (!reqCheck.ok) {
-        // Goal met but build doesn't satisfy the lesson — show a hint, don't win.
-        this._reqHint = reqCheck.hint;
-        return;
-      }
-      this._reqHint = null;
-    } else {
-      // Clear hint whenever not in a "goal met but reqs fail" state.
-      if (res.outcome === OUTCOME.PLAYING) this._reqHint = null;
-    }
-    if (res.outcome !== OUTCOME.PLAYING) {
-      this.outcome = res.outcome;
-      this.outcomeReason = res.reason;
-      this._endTimer = 1.6;
-    }
-  }
-
-  // Check whether the current routing path satisfies this level's winRequires.
-  // Returns { ok: true } or { ok: false, hint: string }.
-  _checkWinRequires() {
-    const req = this.level.winRequires;
-    if (!req) return { ok: true };
-
-    // Find the current best route from the gate.
-    const blocked = (key) => this._isKeyDisabled(key);
-    let activePath = null;
-    let activeSinkKey = null;
-    for (const gk of this.gateKeys) {
-      const trip = findRoundTrip(this.grid, gk, blocked);
-      if (trip) { activePath = trip.path; activeSinkKey = trip.sinkKey; break; }
-    }
-    if (!activePath) return { ok: false, hint: req.requirementHint || "No valid route" };
-
-    // Collect service ids along the path.
-    const pathIds = new Set();
-    for (const key of activePath) {
-      const [c, r] = Grid.parseKey(key);
-      const b = this.grid.getBuilding(c, r);
-      if (b) pathIds.add(b.service.id);
-    }
-
-    // sinkIs: the sink the path terminates at must be one of the listed ids.
-    if (req.sinkIs) {
-      const [sc, sr] = Grid.parseKey(activeSinkKey);
-      const sink = this.grid.getBuilding(sc, sr);
-      if (!sink || !req.sinkIs.includes(sink.service.id)) {
-        return { ok: false, hint: req.requirementHint || "Wrong sink service for this challenge" };
-      }
-    }
-
-    // pathContainsAll: every listed service id must appear in the path.
-    if (req.pathContainsAll) {
-      for (const id of req.pathContainsAll) {
-        if (!pathIds.has(id)) {
-          return { ok: false, hint: req.requirementHint || "Required service missing from route" };
-        }
-      }
-    }
-
-    // pathContainsAny: at least one listed service id must appear in the path.
-    if (req.pathContainsAny) {
-      const has = req.pathContainsAny.some((id) => pathIds.has(id));
-      if (!has) {
-        return { ok: false, hint: req.requirementHint || "Required service missing from route" };
-      }
-    }
-
-    // pathExcludes: none of the listed service ids may appear in the path (e.g.
-    // "no public/NAT hop"). Forces the lesson's *avoidance* requirement.
-    if (req.pathExcludes) {
-      for (const id of req.pathExcludes) {
-        if (pathIds.has(id)) {
-          return { ok: false, hint: req.requirementHint || "Route must avoid a disallowed service" };
-        }
-      }
-    }
-
-    // fanOut: a building of `service` (e.g. SNS) must be wired to at least
-    // `minSinks` distinct sink/storage tiles — a structural pub/sub fan-out check
-    // (the single-path router can't express one-to-many on its own).
-    if (req.fanOut) {
-      const { service, minSinks } = req.fanOut;
-      let satisfied = false;
-      for (const b of this.grid.buildings.values()) {
-        if (b.service.id !== service) continue;
-        let sinks = 0;
-        for (const nk of this.grid.neighbors(Grid.key(b.col, b.row))) {
-          const [nc, nr] = Grid.parseKey(nk);
-          const nb = this.grid.getBuilding(nc, nr);
-          if (nb && SINK_ROLES.has(nb.service.role)) sinks++;
-        }
-        if (sinks >= (minSinks || 2)) { satisfied = true; break; }
-      }
-      if (!satisfied) {
-        return { ok: false, hint: req.requirementHint || "Fan out to more subscribers" };
-      }
-    }
-
-    // Edge-type requirements (Phase 5 typed connections): inspect the connection
-    // type of each wire the active path traverses. Lets a level demand e.g. a
-    // Transit Gateway hop (Mesh vs Bridge) or a PrivateLink hop (private access).
-    if (req.edgeTypeAll || req.edgeTypeAny) {
-      const edgeTypes = new Set();
-      for (let i = 0; i < activePath.length - 1; i++) {
-        edgeTypes.add(this.grid.getEdgeType(activePath[i], activePath[i + 1]));
-      }
-      if (req.edgeTypeAll) {
-        for (const t of req.edgeTypeAll) {
-          if (!edgeTypes.has(t)) {
-            return { ok: false, hint: req.requirementHint || "Required connection type missing from route" };
-          }
-        }
-      }
-      if (req.edgeTypeAny && !req.edgeTypeAny.some((t) => edgeTypes.has(t))) {
-        return { ok: false, hint: req.requirementHint || "Required connection type missing from route" };
-      }
-    }
-
-    return { ok: true };
   }
 
   // Build the results payload (score + stars + bill breakdown) and transition.
@@ -680,7 +408,7 @@ export class LevelScene extends Scene {
           this.budget += b.service.cost; // refund
           this._routeDirty = true;
           audio.play("erase");
-          this._dropPacketsOnBrokenPaths();
+          this.sim._dropPacketsOnBrokenPaths();
         }
       }
       return;
@@ -754,123 +482,18 @@ export class LevelScene extends Scene {
       const [nc, nr] = Grid.parseKey(best);
       this.grid.removeEdge(col, row, nc, nr);
       this._routeDirty = true;
-      this._dropPacketsOnBrokenPaths();
+      this.sim._dropPacketsOnBrokenPaths();
     }
   }
 
-  // -------------------------------------------------------------------------
-  // PACKETS
-  // -------------------------------------------------------------------------
-  _spawnPacket() {
-    // Pick a gate that currently has a route (around any AZ outage), route from it.
-    const blocked = (key) => this._isKeyDisabled(key);
-    for (const gk of this.gateKeys) {
-      const trip = findRoundTrip(this.grid, gk, blocked);
-      if (trip) {
-        this.packets.push(new Packet(trip.path, trip.sinkKey));
-        return;
-      }
-    }
-  }
-
-  _updatePackets(dt) {
-    const live = [];
-    for (const p of this.packets) {
-      p.update(dt, (key) => {
-        const [c, r] = Grid.parseKey(key);
-        const b = this.grid.getBuilding(c, r);
-        if (b) b.activity = 1; // pulse the building the packet enters
-        // ---- T2.1: data-transfer cost, modelled on real AWS billing ----
-        //   - Intra-AZ traffic is FREE: a plain tile contributes 0 to the hop.
-        //   - A tile's transferCostMul is its own processing/egress charge and
-        //     applies regardless of AZ (NAT ×8, VPC Endpoint ×0.02, CloudFront ×0.2).
-        //   - Crossing an AZ boundary adds the full cross-AZ penalty (×8). Gate
-        //     (Route 53) is the internet edge — hops touching it carry no AZ charge.
-        let xferMul = (b && b.service.transferCostMul != null) ? b.service.transferCostMul : 0;
-        const idx = Math.floor(p.t);
-        const prevKey = idx > 0 ? p.path[idx - 1] : null;
-        if (prevKey) {
-          const [pc, pr] = Grid.parseKey(prevKey);
-          const prevB = this.grid.getBuilding(pc, pr);
-          // The wire's connection type adds its standing per-hop processing fee
-          // (Phase 5: TGW +2 always; PrivateLink +1.3 but exempt from the
-          // cross-AZ penalty since traffic stays private; VPC/Peering +0).
-          const conn = getConn(this.grid.getEdgeType(prevKey, key));
-          xferMul += conn.hopCost || 0;
-          const touchesGate =
-            (b && b.service.role === ROLE.GATE) ||
-            (prevB && prevB.service.role === ROLE.GATE);
-          if (!touchesGate && !conn.crossAzExempt &&
-              zoneOfColumn(pc, this.grid.cols) !== zoneOfColumn(c, this.grid.cols)) {
-            xferMul += BILL.crossAzPenalty;
-          }
-        }
-        this.bill.chargeTransfer(xferMul);
-        this.budget -= BILL.transferPerHop * xferMul * this.bill.auditMul;
-        if (this.budget < 0) this.budget = 0;
-
-        // ---- T2.2: an overloaded building sheds the request crossing it. ----
-        if (b && this.loadModel.shouldDrop(this.grid, key)) {
-          p.status = "dropped";
-        }
-        // A tile that just went offline mid-flight also drops the packet.
-        if (b && b.disabled) p.status = "dropped";
-      });
-
-      if (p.status === "done") {
-        // ---- HOOK: on-complete → revenue, scaled by the latency the request
-        // actually experienced (a snappy round-trip pays more than a sluggish
-        // one). Latency comes from the sink building's live queue state. ----
-        const reward = this._rewardFor(p);
-        this.revenue += reward;
-        this.success++;
-        // Sandbox: reinvest a configurable fraction of revenue back into budget.
-        if (!this.level.goalRequests && this._reinvestRate > 0) {
-          const reinvested = Math.round(reward * this._reinvestRate);
-          if (reinvested > 0) this.budget += reinvested;
-        }
-        this._spawnFloat(p.x, p.y, "+$" + reward, PALETTE.good);
-      } else if (p.status === "dropped") {
-        // ---- HOOK: on-drop → lost (an SLA miss costs goodwill/credits). ----
-        const penalty = 6;
-        this.lost += penalty;
-        this.failed++;
-        this._spawnFloat(p.x, p.y, "drop", PALETTE.bad);
-      } else {
-        live.push(p);
-      }
-    }
-    this.packets = live;
-  }
-
-  // Per-request reward: base, reduced as the serving database's latency climbs
-  // under load. Healthy DB -> full reward; saturated DB -> a fraction.
-  _rewardFor(p) {
-    const base = 12;
-    const [c, r] = Grid.parseKey(p.sinkKey);
-    const sink = this.grid.getBuilding(c, r);
-    const latency = sink ? sink.latencyMs || sink.service.latency : 6;
-    // Map latency ~[2..90]ms to a [1.0..0.35] multiplier.
-    const mul = clamp(1 - (latency - 6) / 120, 0.35, 1);
-    return Math.max(3, Math.round(base * mul));
-  }
-
-  // When a wire/building is removed — or a tile goes offline (AZ failure) — any
-  // packet whose remaining path is broken is dropped (a failure) rather than
-  // teleporting through a gap.
-  _dropPacketsOnBrokenPaths() {
-    for (const p of this.packets) {
-      if (p.status === "done" || p.status === "dropped") continue;
-      const idx = Math.floor(p.t);
-      for (let i = idx; i < p.path.length - 1; i++) {
-        const brokenEdge = !this.grid.hasEdge(p.path[i], p.path[i + 1]);
-        const offline =
-          this._isKeyDisabled(p.path[i]) || this._isKeyDisabled(p.path[i + 1]);
-        if (brokenEdge || offline) {
-          p.status = "dropped";
-          break;
-        }
-      }
+  // Drain the side-effect events the sim queued during step() and turn them into
+  // the scene's audio + floating-text feedback. This is the one place render/
+  // audio concerns re-attach to the pure sim — keeping the sim itself headless.
+  _drainSim() {
+    for (const e of this.sim.drainEmitted()) {
+      if (e.kind === "sound") audio.play(e.name);
+      else if (e.kind === "float")
+        this._spawnFloat(e.x, e.y, e.text, e.good ? PALETTE.good : PALETTE.bad);
     }
   }
 

@@ -340,13 +340,13 @@ const depRouting = await page.evaluate(async () => {
   s.grid.place(S.rds_replica, gc + 2, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr));
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr));
-  const blocked = (key) => s._isKeyDisabled(key);
+  const blocked = (key) => s.sim._isKeyDisabled(key);
   const replica = s.grid.getBuilding(gc + 2, gr);
-  const invalidNoPrimary = !s._dependencyMet(replica);
+  const invalidNoPrimary = !s.sim._dependencyMet(replica);
   const routeNoPrimary = pf.gateHasRoute(s.grid, K(gc, gr), blocked);
   // Place a primary RDS anywhere — the replica activates.
   s.grid.place(S.rds, gc + 1, gr + 1);
-  const invalidWithPrimary = !s._dependencyMet(replica);
+  const invalidWithPrimary = !s.sim._dependencyMet(replica);
   const routeWithPrimary = pf.gateHasRoute(s.grid, K(gc, gr), blocked);
   return { invalidNoPrimary, routeNoPrimary, invalidWithPrimary, routeWithPrimary };
 });
@@ -435,11 +435,11 @@ const edgeWinReq = await page.evaluate(async () => {
   s.grid.place(S.rds, gc + 2, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
-  const blockedByVpc = !s._checkWinRequires().ok; // all-VPC route → win blocked
+  const blockedByVpc = !s.sim._checkWinRequires().ok; // all-VPC route → win blocked
   // Flip the second hop to a Transit Gateway link.
   s.grid.removeEdge(gc + 1, gr, gc + 2, gr);
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "tgw");
-  const okWithTgw = s._checkWinRequires().ok;    // now satisfies edgeTypeAny:["tgw"]
+  const okWithTgw = s.sim._checkWinRequires().ok;    // now satisfies edgeTypeAny:["tgw"]
   return { blockedByVpc, okWithTgw };
 });
 
@@ -501,14 +501,14 @@ const secureWin = await page.evaluate(async () => {
   // Seeded NAT at (8,2), DynamoDB at (12,4). Route the public way first.
   s.grid.addEdge(K(gc, gr), K(8, 2), "vpc");  // gate -> NAT
   s.grid.addEdge(K(8, 2), K(12, 4), "vpc");   // NAT -> DDB
-  const natBlocked = !s._checkWinRequires().ok;
+  const natBlocked = !s.sim._checkWinRequires().ok;
   // Tear down the NAT path, expose the DB privately over PrivateLink.
   s.grid.removeEdge(gc, gr, 8, 2);
   s.grid.removeEdge(8, 2, 12, 4);
   s.grid.place(S.ec2, gc + 1, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(12, 4), "privatelink");
-  const plinkOk = s._checkWinRequires().ok;
+  const plinkOk = s.sim._checkWinRequires().ok;
   return { natBlocked, plinkOk };
 });
 
@@ -525,13 +525,13 @@ const cacheWin = await page.evaluate(async () => {
   s.grid.place(S.ec2, gc + 1, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(12, 4), "vpc");
-  const noCacheBlocked = !s._checkWinRequires().ok;
+  const noCacheBlocked = !s.sim._checkWinRequires().ok;
   // Insert a cache between compute and the DB.
   s.grid.removeEdge(gc + 1, gr, 12, 4);
   s.grid.place(S.cache, gc + 2, gr);
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
   s.grid.addEdge(K(gc + 2, gr), K(12, 4), "vpc");
-  const cacheOk = s._checkWinRequires().ok;
+  const cacheOk = s.sim._checkWinRequires().ok;
   return { noCacheBlocked, cacheOk };
 });
 
@@ -549,7 +549,7 @@ const readWin = await page.evaluate(async () => {
   s.grid.place(S.rds_replica, gc + 2, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
-  const replicaOk = s._checkWinRequires().ok; // replica valid (primary seeded) + is the sink
+  const replicaOk = s.sim._checkWinRequires().ok; // replica valid (primary seeded) + is the sink
   return { replicaOk };
 });
 
@@ -566,13 +566,13 @@ const decoupleWin = await page.evaluate(async () => {
   s.grid.place(S.rds, gc + 2, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
-  const noQueueBlocked = !s._checkWinRequires().ok;
+  const noQueueBlocked = !s.sim._checkWinRequires().ok;
   // Insert an SQS queue between the gate and compute.
   s.grid.removeEdge(gc, gr, gc + 1, gr);
   s.grid.place(S.sqs, gc + 1, gr - 1);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr - 1), "vpc");
   s.grid.addEdge(K(gc + 1, gr - 1), K(gc + 1, gr), "vpc");
-  const sqsOk = s._checkWinRequires().ok;
+  const sqsOk = s.sim._checkWinRequires().ok;
   return { noQueueBlocked, sqsOk };
 });
 
@@ -592,10 +592,10 @@ const fanOutWin = await page.evaluate(async () => {
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
   // Fan to only ONE subscriber first.
   s.grid.addEdge(K(gc + 2, gr), K(13, 3), "vpc");
-  const oneSinkBlocked = !s._checkWinRequires().ok;
+  const oneSinkBlocked = !s.sim._checkWinRequires().ok;
   // Add the second subscriber.
   s.grid.addEdge(K(gc + 2, gr), K(13, 7), "vpc");
-  const twoSinksOk = s._checkWinRequires().ok;
+  const twoSinksOk = s.sim._checkWinRequires().ok;
   return { oneSinkBlocked, twoSinksOk };
 });
 
@@ -627,12 +627,12 @@ const coldWin = await page.evaluate(async () => {
   s.grid.place(S.s3, gc + 2, gr); // Standard S3
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
-  const standardBlocked = !s._checkWinRequires().ok;
+  const standardBlocked = !s.sim._checkWinRequires().ok;
   // Swap the sink to Glacier.
   s.grid.remove(gc + 2, gr);
   s.grid.place(S.s3_glacier, gc + 2, gr);
   s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
-  const glacierOk = s._checkWinRequires().ok;
+  const glacierOk = s.sim._checkWinRequires().ok;
   return { standardBlocked, glacierOk };
 });
 
@@ -649,17 +649,17 @@ const rightWin = await page.evaluate(async () => {
   s.grid.place(S.ec2, gc + 1, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(12, 4), "vpc");
-  const onDemandBlocked = !s._checkWinRequires().ok;
+  const onDemandBlocked = !s.sim._checkWinRequires().ok;
   // Replace with Reserved compute.
   s.grid.remove(gc + 1, gr);
   s.grid.place(S.ec2_reserved, gc + 1, gr);
   s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
   s.grid.addEdge(K(gc + 1, gr), K(12, 4), "vpc");
-  const reservedOk = s._checkWinRequires().ok;
+  const reservedOk = s.sim._checkWinRequires().ok;
   // A Spot tile goes offline during a spot-interruption event.
   s.grid.place(S.ec2_spot, gc + 1, gr + 2);
   s.events.events.push({ kind: "spot_interruption", state: "active", at: 0, duration: 9999, warn: 0 });
-  const spotOfflineDuringEvent = s._isKeyDisabled(K(gc + 1, gr + 2));
+  const spotOfflineDuringEvent = s.sim._isKeyDisabled(K(gc + 1, gr + 2));
   return { onDemandBlocked, reservedOk, spotOfflineDuringEvent };
 });
 
@@ -683,11 +683,11 @@ const regionDR = await page.evaluate(async () => {
   s.grid.addEdge(K(14, 5), K(15, 5), "vpc");
   // Inject an active region failure (downs the primary region's bands).
   s.events.events.push({ kind: "region_failure", state: "active", at: 0, duration: 9999, warn: 0, zones: [0, 1] });
-  const primaryMultiAzDown = s._isKeyDisabled(K(3, 3));   // Multi-AZ does NOT survive a region loss
-  const drComputeUp = !s._isKeyDisabled(K(14, 5));        // DR region survives
-  const gateUp = !s._isKeyDisabled(K(gc, gr));            // Route 53 is global
+  const primaryMultiAzDown = s.sim._isKeyDisabled(K(3, 3));   // Multi-AZ does NOT survive a region loss
+  const drComputeUp = !s.sim._isKeyDisabled(K(14, 5));        // DR region survives
+  const gateUp = !s.sim._isKeyDisabled(K(gc, gr));            // Route 53 is global
   const drRouteSurvives = (await import("./src/grid/pathfind.js")).gateHasRoute(
-    s.grid, K(gc, gr), (key) => s._isKeyDisabled(key)
+    s.grid, K(gc, gr), (key) => s.sim._isKeyDisabled(key)
   );
   return { primaryMultiAzDown, drComputeUp, gateUp, drRouteSurvives };
 });
