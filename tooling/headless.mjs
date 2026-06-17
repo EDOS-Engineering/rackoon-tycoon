@@ -8,7 +8,7 @@
 
 import { makeRng } from "../game/src/sim/rng.js";
 import { EventDirector } from "../game/src/waves/events.js";
-import { LoadModel } from "../game/src/waves/load.js";
+import { LoadModel, DEFAULT_SCALE_POLICY } from "../game/src/waves/load.js";
 import { BillMeter } from "../game/src/economy/billing.js";
 import { WaveScheduler } from "../game/src/waves/scheduler.js";
 import { Grid } from "../game/src/grid/grid.js";
@@ -513,5 +513,61 @@ if (!rsBought) problems.push("reservation: sim.buyReservation should succeed on 
 if (!(rsim.economy.reservationSaved > 0)) problems.push("reservation: a held reservation should accrue running-cost savings over a run");
 
 console.log("reservation:", JSON.stringify({ burnFull: +rbFull.toFixed(3), burnDisc: +rbDisc.toFixed(3), spend: rsim.economy.reservationSpend, saved: +rsim.economy.reservationSaved.toFixed(2) }));
+
+// 15. Sim-depth: auto-scaling policy (target-tracking). The policy steers each
+//     autoScale tier's effective capacity toward demand/targetUtil, clamped to
+//     [base, base×maxScale]. A lower target → more headroom; a higher ceiling →
+//     more capacity under a spike. The extra capacity bills (serverless ACU cost).
+const aBase = SERVICES.aurora_sv2.throughput; // 45
+// Drive an aurora tile to converge cap for a given demand + policy (big dt snaps
+// the warm-up so the test is fast + deterministic).
+function auroraScale(demand, policy) {
+  const g = new Grid(6, 6);
+  const b = g.place(SERVICES.aurora_sv2, 2, 2);
+  const lm = new LoadModel(makeRng(1));
+  lm.policy = { ...policy };
+  for (let i = 0; i < 6; i++) { lm._demand.set("2,2", demand); lm.update(g, 100); }
+  return { scaleFrac: b.scaleFrac, cap: b._warmCap };
+}
+// Ceiling: huge demand clamps cap at base×maxScale (scaleFrac → maxScale−1).
+const cap2 = auroraScale(5000, { targetUtil: 0.8, maxScale: 2 });
+const cap4 = auroraScale(5000, { targetUtil: 0.8, maxScale: 4 });
+if (Math.abs(cap2.scaleFrac - 1) > 1e-6) problems.push("scaling: maxScale=2 should clamp scaleFrac at 1 under heavy demand");
+if (Math.abs(cap4.scaleFrac - 3) > 1e-6) problems.push("scaling: maxScale=4 should clamp scaleFrac at 3 under heavy demand");
+if (!(cap4.cap > cap2.cap)) problems.push("scaling: a higher max-scale ceiling should provision more capacity");
+// Headroom: at a moderate demand (below the ceiling) a lower target util provisions
+// more capacity than a high one.
+const lean = auroraScale(45, { targetUtil: 0.9, maxScale: 2 });
+const roomy = auroraScale(45, { targetUtil: 0.6, maxScale: 2 });
+if (!(roomy.cap > lean.cap)) problems.push("scaling: a lower target util should hold more headroom (bigger cap)");
+// Fixed (non-autoscale) tiers ignore the policy entirely.
+const fg = new Grid(6, 6);
+const fb = fg.place(SERVICES.ec2, 2, 2);
+const flm = new LoadModel(makeRng(1));
+flm.policy = { targetUtil: 0.4, maxScale: 4 };
+for (let i = 0; i < 6; i++) { flm._demand.set("2,2", 5000); flm.update(fg, 100); }
+if (fb.scaleFrac != null) problems.push("scaling: a non-autoscale tile should not scale");
+// Billing: a scaled autoScale tile bills for the extra capacity (scaleBilling=1 →
+// running at 2× capacity costs 2× running burn); non-autoscale tiles are flat.
+const sbg = new Grid(6, 6);
+const sbb = sbg.place(SERVICES.aurora_sv2, 2, 2);
+sbb.scaleFrac = 0; const scBurn0 = BillMeter.runningBurn(sbg);
+sbb.scaleFrac = 1; const scBurn1 = BillMeter.runningBurn(sbg);
+if (Math.abs(scBurn1 - scBurn0 * 2) > 1e-9) problems.push("scaling: a tile scaled to 2× capacity should bill 2× running burn");
+const nbg = new Grid(6, 6);
+const nbb = nbg.place(SERVICES.ec2, 2, 2);
+nbb.scaleFrac = 1; // bogus on a fixed tile — must be ignored by billing
+if (Math.abs(BillMeter.runningBurn(nbg) - SERVICES.ec2.cost / 130) > 1e-9) problems.push("scaling: scaleFrac on a non-autoscale tile must not affect billing");
+// setScalePolicy clamps to bounds + snaps to step; snapshot round-trips the policy.
+const psim = buildCompany(5);
+if (psim.scalePolicy().targetUtil !== DEFAULT_SCALE_POLICY.targetUtil) problems.push("scaling: a fresh run should start on the default policy");
+if (psim.setScalePolicy("targetUtil", -10) !== 0.4) problems.push("scaling: target util should clamp at its floor");
+if (psim.setScalePolicy("maxScale", 10) !== 4) problems.push("scaling: max scale should clamp at its ceiling");
+if (psim.setScalePolicy("maxScale", -1) !== 3) problems.push("scaling: a single step down from the ceiling should land on 3×");
+const psnap = psim.snapshot();
+const prebuilt = buildCompany(psnap.seed, psnap);
+if (prebuilt.scalePolicy().targetUtil !== 0.4 || prebuilt.scalePolicy().maxScale !== 3) problems.push("scaling: the policy should survive a snapshot/resume round-trip");
+
+console.log("scaling:", JSON.stringify({ cap2: +cap2.cap.toFixed(1), cap4: +cap4.cap.toFixed(1), leanCap: +lean.cap.toFixed(1), roomyCap: +roomy.cap.toFixed(1), base: aBase, burn1x: +scBurn0.toFixed(3), burn2x: +scBurn1.toFixed(3), clamped: psim.scalePolicy().targetUtil + "/" + psim.scalePolicy().maxScale }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

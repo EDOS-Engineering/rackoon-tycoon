@@ -6,6 +6,23 @@
 **Status:** Phases 1–6 ✅ **complete.** Feature-complete campaign: **19 levels + sandbox**, every SAA-C03 domain ≥3 boss levels; 24 services / 6 palette tabs; typed connections (VPC/Peering/TGW/PrivateLink) with transitive routing; realistic cross-AZ economy; incidents (AZ failure, traffic spike, cost audit, spot interruption, region failure, + sim-depth: viral spike, dependency outage, noisy neighbor, cert expiry, price hike). **Phase 7 ✅ R-series complete (R1–R6):** the simulation is now a standalone, headless, **seedable-deterministic** core (`sim/simulation.js`) driven by a living-economy **DemandModel** (diurnal/weekly/seasonal + compounding growth), an **Economy** ledger, a seeded escalating **IncidentDeck**, and a new **Company (free-run) mode** with business **milestones** + save/resume. Verified by `tooling/headless.mjs` (fast-run balancing harness) + the Playwright smoke. Stack: zero-dep vanilla. **Next:** T7.6 realism polish; **Phase 8** — the grand pivot: fork into a visual AWS SDK client.
 
 ## Progress log
+- **2026-06-17 — Sim depth: auto-scaling policy / target-tracking (feature branch).**
+  Company mode can now tune a live **auto-scaling policy** for the autoScale tier (Aurora
+  Serverless v2) — two target-tracking knobs, exactly like an AWS scaling policy: **Target
+  util** (the load each tier steers toward; the tier provisions `cap = demand / targetUtil`,
+  so a lower target holds more headroom) and **Max scale** (the ceiling, as a multiple of base
+  throughput). The extra capacity now **bills**: an autoScale tile costs its base running burn
+  × `(1 + scaleBilling·scaleFrac)` (`BILL.scaleBilling` in `billing.js`), i.e. serverless/ACU
+  pricing — so generous headroom or a high ceiling is a real cost↔SLO trade, not free
+  reliability. Policy lives on `LoadModel` (`DEFAULT_SCALE_POLICY` + `SCALE_POLICY_BOUNDS`);
+  `Simulation.scalePolicy()`/`setScalePolicy(knob, delta)` are the UI hooks (clamped + step-
+  snapped), and the policy round-trips through the freerun snapshot. A right-side **AUTO-SCALING
+  POLICY** panel (two ± steppers below RESERVED CAPACITY, edge-triggered clicks consumed before
+  the world) drives it. Replaces the old hard-coded `demand·1.1` / 2× ramp (defaults reproduce
+  it). Headless asserts the ceiling clamp, headroom vs target, fixed-tier immunity, the scaled
+  billing, policy clamp + snapshot round-trip; smoke asserts the same + the live panel.
+  → `waves/load.js`, `economy/billing.js`, `sim/simulation.js`, `scenes/levelScene.js`,
+  `tooling/{headless,smoke}.mjs`. headless 0; smoke 0/0. **Sim Depth track complete.**
 - **2026-06-17 — Sim depth: reserved-capacity purchasing / commitment risk (feature branch).**
   Company mode can now buy a **reservation** (compute or database): pays an UPFRONT lump
   (sunk) and discounts that role's running cost for a term (in in-game days) — the SAA

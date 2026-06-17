@@ -1,0 +1,21 @@
+import { chromium } from "playwright";
+import { fileURLToPath } from "url";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+await page.goto("file://" + process.cwd() + "/index.html");
+await page.waitForFunction(() => window.__rackoon);
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "company" }));
+await page.waitForTimeout(400);
+await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  s.started = true;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c,r)=>c+","+r;
+  s.grid.place(S.aurora_sv2, gc+1, gr);
+  s.grid.addEdge(K(gc,gr), K(gc+1,gr), "vpc");
+  s._routeDirty = true;
+});
+await page.waitForTimeout(1500);
+await page.screenshot({ path: "/tmp/company-panel.png" });
+await browser.close();

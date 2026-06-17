@@ -27,6 +27,22 @@ const HEAT_EASE = 6;
 // an autoScale tier's effective capacity ramps toward demand (T7.6 scaling lag).
 const WARMUP_TAU = 3.5;
 
+// Sim-depth: player-set AUTO-SCALING POLICY (target-tracking). Two knobs, exactly
+// like an AWS target-tracking scaling policy:
+//   - targetUtil: the load the policy steers each autoScale tier toward. The tier
+//     provisions cap = demand / targetUtil, so a LOW target keeps big headroom
+//     (better latency/SLO under spikes) at the cost of running — and BILLING —
+//     more capacity; a HIGH target runs lean and cheap but clips spikes.
+//   - maxScale: the ceiling, as a multiple of base throughput, the tier may scale
+//     to. Caps both the protection and the worst-case bill.
+// Defaults reproduce the prior hard-coded behavior (~0.8 util, 2× ceiling).
+export const DEFAULT_SCALE_POLICY = { targetUtil: 0.8, maxScale: 2 };
+// Bounds + step the UI clamps to.
+export const SCALE_POLICY_BOUNDS = {
+  targetUtil: { min: 0.4, max: 0.95, step: 0.05 },
+  maxScale: { min: 1, max: 4, step: 1 },
+};
+
 export class LoadModel {
   // `rng` is the seedable sim RNG (defaults to Math.random for back-compat).
   constructor(rng = Math.random) {
@@ -35,6 +51,8 @@ export class LoadModel {
     // Sim-depth: a ≤1 derate on effective capacity from a noisy-neighbor incident
     // (set by the sim each step). 1 = no contention.
     this.capacityMul = 1;
+    // Sim-depth: live auto-scaling policy (player-set; see DEFAULT_SCALE_POLICY).
+    this.policy = { ...DEFAULT_SCALE_POLICY };
   }
 
   reset() {
@@ -85,11 +103,15 @@ export class LoadModel {
       const baseCap = Math.max(1, b.service.throughput);
       let cap;
       if (b.service.autoScale) {
-        const target = Math.min(baseCap * 2, Math.max(baseCap, demand * 1.1));
+        // Target-tracking: provision toward demand / targetUtil, clamped to the
+        // [base, base*maxScale] band, then warm up toward it (scaling lag).
+        const util = this.policy.targetUtil > 0 ? this.policy.targetUtil : 0.8;
+        const maxCap = baseCap * Math.max(1, this.policy.maxScale || 1);
+        const target = Math.min(maxCap, Math.max(baseCap, demand / util));
         if (b._warmCap == null) b._warmCap = baseCap;
         b._warmCap += (target - b._warmCap) * Math.min(1, dt / WARMUP_TAU);
         cap = b._warmCap;
-        b.scaleFrac = (cap - baseCap) / baseCap; // 0..1 headroom in use, for tooltips
+        b.scaleFrac = (cap - baseCap) / baseCap; // 0..(maxScale-1), capacity above base
       } else {
         cap = baseCap;
       }

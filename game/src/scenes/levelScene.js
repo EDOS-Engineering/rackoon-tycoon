@@ -302,8 +302,26 @@ export class LevelScene extends Scene {
       }
     }
 
+    // ---- Company auto-scaling policy +/- buttons (edge-triggered: one step per
+    // click, consumed before the world like the reservation buttons). ----
+    let overScale = false;
+    if (this._isFreerun && this.started && this._scaleBtns) {
+      for (const key in this._scaleBtns) {
+        const b = this._scaleBtns[key];
+        if (this._hitRect(b, input.x, input.y)) {
+          overScale = true;
+          if (input.leftDown) {
+            const step = b.knob === "maxScale" ? 1 : 0.05;
+            this.sim.setScalePolicy(b.knob, step * b.dir);
+            this._drainSim();
+          }
+          break;
+        }
+      }
+    }
+
     // ---- World interactions (only when not over UI and not panning) ----
-    if (!overUI && !overReservation && !this._panning) {
+    if (!overUI && !overReservation && !overScale && !this._panning) {
       this._handleWorld(input);
     }
 
@@ -786,6 +804,9 @@ export class LevelScene extends Scene {
 
     // Company reserved-capacity purchasing (commitment risk).
     if (this._isFreerun && this.started) this._renderReservations(ctx, W, H);
+
+    // Company auto-scaling policy (target-tracking: target util / max scale).
+    if (this._isFreerun && this.started) this._renderScalePolicy(ctx, W, H);
 
     // Operational telemetry (T7.6): SLO compliance, blast radius, RTO — the ops
     // numbers a real review grades. Shown once the shift is running.
@@ -1515,6 +1536,70 @@ export class LevelScene extends Scene {
         ctx.fillText("$" + plan.upfront, x + w - 10, y + 20);
       }
       y += bh + gap;
+    }
+    ctx.restore();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+  }
+
+  // Company auto-scaling policy panel (sim-depth): two target-tracking knobs the
+  // player tunes live — Target util (the load each autoScale tier steers toward;
+  // lower = more headroom, higher bill) and Max scale (the capacity ceiling). The
+  // ± buttons are stored in this._scaleBtns and consumed in update(). Sits below
+  // the reserved-capacity panel.
+  _renderScalePolicy(ctx, W, H) {
+    const pol = this.sim.scalePolicy();
+    const w = 192;
+    const x = W - w - 14;
+    let y = 332; // below RESERVED CAPACITY (two 38px rows from y=214)
+    this._scaleBtns = {};
+
+    ctx.save();
+    ctx.textBaseline = "middle";
+    ctx.font = "700 10px system-ui, sans-serif";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.textAlign = "left";
+    ctx.fillText("⚙ AUTO-SCALING POLICY", x, y);
+    y += 16;
+
+    const rows = [
+      { knob: "targetUtil", label: "Target util", val: Math.round(pol.targetUtil * 100) + "%" },
+      { knob: "maxScale", label: "Max scale", val: pol.maxScale.toFixed(0) + "×" },
+    ];
+    const rh = 26;
+    const bw = 22;
+    const bh = rh - 6;
+    for (const row of rows) {
+      ctx.fillStyle = PALETTE.textDim;
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(row.label, x, y + rh / 2);
+
+      const plusX = x + w - bw;
+      const minusX = plusX - bw - 44;
+      const minus = { x: minusX, y: y + 2, w: bw, h: bh, knob: row.knob, dir: -1 };
+      const plus = { x: plusX, y: y + 2, w: bw, h: bh, knob: row.knob, dir: 1 };
+      this._scaleBtns[row.knob + "-"] = minus;
+      this._scaleBtns[row.knob + "+"] = plus;
+      for (const [btn, sym] of [[minus, "−"], [plus, "+"]]) {
+        const over = this._hitRect(btn, this.game.input.x, this.game.input.y);
+        ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+        roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 5);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.10)";
+        ctx.lineWidth = 1;
+        roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 5);
+        ctx.stroke();
+        ctx.fillStyle = PALETTE.text;
+        ctx.font = "700 13px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(sym, btn.x + btn.w / 2, btn.y + btn.h / 2 + 1);
+      }
+      ctx.fillStyle = PALETTE.accent;
+      ctx.font = "700 12px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(row.val, (minusX + bw + plusX) / 2, y + rh / 2);
+      y += rh;
     }
     ctx.restore();
     ctx.textAlign = "left";

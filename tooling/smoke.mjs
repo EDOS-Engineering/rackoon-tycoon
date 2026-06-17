@@ -749,6 +749,32 @@ const reservation = await page.evaluate(async () => {
   };
 });
 
+// Sim-depth: auto-scaling policy. The load model honors the policy (lower target
+// util → more headroom; max-scale ceiling caps it), the extra capacity bills, and
+// the sim's setScalePolicy clamps to bounds.
+const scaling = await page.evaluate(async () => {
+  const gm = await import("./src/grid/grid.js");
+  const cat = await import("./src/services/catalog.js");
+  const ld = await import("./src/waves/load.js");
+  const bill = await import("./src/economy/billing.js");
+  const capFor = (demand, policy) => {
+    const g = new gm.Grid(6, 6);
+    const b = g.place(cat.SERVICES.aurora_sv2, 2, 2);
+    const lm = new ld.LoadModel(() => 0.5);
+    lm.policy = { ...policy };
+    for (let i = 0; i < 6; i++) { lm._demand.set("2,2", demand); lm.update(g, 100); }
+    return b._warmCap;
+  };
+  const ceiling = capFor(5000, { targetUtil: 0.8, maxScale: 2 }) < capFor(5000, { targetUtil: 0.8, maxScale: 4 });
+  const headroom = capFor(45, { targetUtil: 0.6, maxScale: 2 }) > capFor(45, { targetUtil: 0.9, maxScale: 2 });
+  // Billing: a scaled autoScale tile costs more.
+  const g = new gm.Grid(6, 6);
+  const b = g.place(cat.SERVICES.aurora_sv2, 2, 2);
+  b.scaleFrac = 0; const burn0 = bill.BillMeter.runningBurn(g);
+  b.scaleFrac = 1; const burn1 = bill.BillMeter.runningBurn(g);
+  return { defaults: !!ld.DEFAULT_SCALE_POLICY, ceiling, headroom, bills: burn1 > burn0 };
+});
+
 // Company Run Report: cashing out a freerun run hands the results scene a
 // company-shaped payload (mode + milestone eval + ops scorecard) so it renders
 // the dedicated report instead of the scenario verdict.
@@ -782,6 +808,25 @@ const runReport = await page.evaluate(() => {
     milestoneTotal: r.milestones ? r.milestones.total : -1,
     hasOps: !!(r.ops && typeof r.ops.sloCompliance === "number"),
     sloPresent: !!(r.ops && r.ops.sloCompliance != null),
+  };
+});
+
+// Live auto-scaling panel: on a running company shift the policy is mutable via
+// the sim API and the panel registers its ± buttons.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "company" }));
+await page.waitForTimeout(300);
+const scalePanel = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  s.started = true;
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const before = { ...s.sim.scalePolicy() };
+  s.sim.setScalePolicy("maxScale", 1);
+  s.sim.setScalePolicy("targetUtil", -0.05);
+  const after = { ...s.sim.scalePolicy() };
+  return {
+    hasPanel: !!s._scaleBtns && Object.keys(s._scaleBtns).length === 4,
+    maxUp: after.maxScale === before.maxScale + 1,
+    utilDown: Math.abs(after.targetUtil - (before.targetUtil - 0.05)) < 1e-9,
   };
 });
 
@@ -819,6 +864,8 @@ console.log("runReport:", JSON.stringify(runReport));
 console.log("simDepth:", JSON.stringify(simDepth));
 console.log("drift:", JSON.stringify(drift));
 console.log("reservation:", JSON.stringify(reservation));
+console.log("scaling:", JSON.stringify(scaling));
+console.log("scalePanel:", JSON.stringify(scalePanel));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -981,6 +1028,12 @@ if (!drift.surcharges) problems.push("sim-depth: a drifted tile should raise the
 if (!reservation.plans)     problems.push("sim-depth: reservation plans (compute + database) should exist");
 if (!reservation.bought || !reservation.active) problems.push("sim-depth: buying a reservation should activate it");
 if (!reservation.discounts) problems.push("sim-depth: an active reservation should discount the running burn");
+if (!scaling.defaults)  problems.push("sim-depth: a default auto-scaling policy should be exported");
+if (!scaling.ceiling)   problems.push("sim-depth: a higher max-scale ceiling should provision more capacity");
+if (!scaling.headroom)  problems.push("sim-depth: a lower target util should hold more headroom");
+if (!scaling.bills)     problems.push("sim-depth: a scaled autoScale tile should bill for the extra capacity");
+if (!scalePanel.hasPanel)  problems.push("sim-depth: the auto-scaling panel should register its four ± buttons");
+if (!scalePanel.maxUp || !scalePanel.utilDown) problems.push("sim-depth: setScalePolicy should move the live policy knobs");
 
 console.log("phase4:", JSON.stringify(phase4));
 
