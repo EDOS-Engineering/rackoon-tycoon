@@ -25,7 +25,7 @@ import { Packet } from "../entities/packet.js";
 import { getConn } from "../services/connections.js";
 import { SINK_ROLES, ROLE, SERVICES } from "../services/catalog.js";
 import { BillMeter, BILL } from "../economy/billing.js";
-import { Economy } from "../economy/economy.js";
+import { Economy, RESERVATION_PLANS } from "../economy/economy.js";
 import { WaveScheduler } from "../waves/scheduler.js";
 import { DemandModel } from "../waves/demand.js";
 import { LoadModel } from "../waves/load.js";
@@ -225,6 +225,11 @@ export class Simulation {
 
     // Reflect cost-audit + traffic state into the bill meter.
     this.bill.auditMul = this.events.billMultiplier();
+    // Sim-depth reserved capacity: expire elapsed commitments, then feed the
+    // active discounts into the bill (they shave matching tiles' running cost).
+    this.economy.expireReservations(this.simDays);
+    this.bill.roleDiscount = this.economy.roleDiscount();
+    this.economy.reservationSaved += BillMeter.reservationSavings(this.grid, this.bill.roleDiscount) * this.bill.auditMul * dt;
 
     // Apply AZ-failure outages to buildings. When the disabled set changes, the
     // route must be recomputed (and in-flight packets on broken paths dropped).
@@ -373,6 +378,14 @@ export class Simulation {
   // Current milestone evaluation (company mode HUD + results read this).
   evaluateMilestones() {
     return this.milestones.evaluate(this.metrics());
+  }
+
+  // Sim-depth: buy a reserved-capacity plan by id (UI hook). Emits a sound on a
+  // successful purchase; returns whether it went through.
+  buyReservation(planId) {
+    const ok = this.economy.buyReservation(RESERVATION_PLANS[planId], this.simDays);
+    if (ok) this.emit({ kind: "sound", name: "place" });
+    return ok;
   }
 
   // Live operator telemetry snapshot (T7.5) — demand/margin/SLO-burn/headroom +

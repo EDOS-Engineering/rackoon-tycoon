@@ -17,7 +17,7 @@ import { Simulation } from "../game/src/sim/simulation.js";
 import { MilestoneSet } from "../game/src/sim/milestones.js";
 import { RealismTracker } from "../game/src/sim/realism.js";
 import { DemandModel } from "../game/src/waves/demand.js";
-import { Economy } from "../game/src/economy/economy.js";
+import { Economy, RESERVATION_PLANS } from "../game/src/economy/economy.js";
 import { IncidentDeck } from "../game/src/waves/incidents.js";
 import { getLevel } from "../game/src/levels/levels.js";
 
@@ -480,5 +480,38 @@ if (!(burn1 > burn0)) problems.push("drift: a drifted tile should cost more runn
 if (Math.abs(burn1 - burn0 * (1 + 0.6)) > 1e-9) problems.push("drift: surcharge should be driftSurcharge × base at full drift");
 
 console.log("drift:", JSON.stringify({ idleDrift: +driftIdle.toFixed(2), healthyDrift: +idle.drift.toFixed(2), burnNoDrift: +burn0.toFixed(3), burnFullDrift: +burn1.toFixed(3) }));
+
+// 14. Sim-depth: reserved-capacity purchasing (commitment risk). Buying pays an
+//     upfront (sunk) and discounts the role for a term; the bill reflects it.
+const re = new Economy(1000);
+const compPlan = RESERVATION_PLANS.compute;
+const boughtC = re.buyReservation(compPlan, 0);
+if (!(boughtC && re.hasReservation("compute"))) problems.push("reservation: buying compute should activate it");
+if (re.budget !== 1000 - compPlan.upfront) problems.push("reservation: upfront should be charged to the budget");
+if (re.reservationSpend !== compPlan.upfront) problems.push("reservation: upfront should be tracked as committed spend");
+if (re.roleDiscount().compute !== compPlan.discountPct) problems.push("reservation: roleDiscount should expose the active discount");
+if (re.buyReservation(compPlan, 0)) problems.push("reservation: double-buying the same role should fail");
+const poor = new Economy(10);
+if (poor.buyReservation(compPlan, 0)) problems.push("reservation: an unaffordable plan should not be bought");
+re.expireReservations(compPlan.termDays + 1);
+if (re.hasReservation("compute")) problems.push("reservation: a reservation should expire after its term");
+
+// Billing reflects the discount (a compute tile burns less under a compute reservation).
+const rbg = new Grid(6, 6);
+rbg.place(SERVICES.ec2, 2, 2); // compute
+const rbFull = BillMeter.runningBurn(rbg);
+const rbDisc = BillMeter.runningBurn(rbg, { compute: 0.35 });
+if (!(rbDisc < rbFull)) problems.push("reservation: a discount should lower the running burn");
+if (Math.abs(rbDisc - rbFull * 0.65) > 1e-9) problems.push("reservation: discounted burn should be (1−discount)×base");
+if (Math.abs(BillMeter.reservationSavings(rbg, { compute: 0.35 }) - rbFull * 0.35) > 1e-9) problems.push("reservation: reservationSavings should equal the discounted amount");
+
+// Composed sim: buying a reservation accrues savings over a run.
+const rsim = buildCompany(5); // places a compute (ec2) tile
+const rsBought = rsim.buyReservation("compute");
+for (let i = 0; i < 600; i++) { rsim.recomputeRoute(); rsim.step(1 / 60); rsim.drainEmitted(); }
+if (!rsBought) problems.push("reservation: sim.buyReservation should succeed on a fresh company run");
+if (!(rsim.economy.reservationSaved > 0)) problems.push("reservation: a held reservation should accrue running-cost savings over a run");
+
+console.log("reservation:", JSON.stringify({ burnFull: +rbFull.toFixed(3), burnDisc: +rbDisc.toFixed(3), spend: rsim.economy.reservationSpend, saved: +rsim.economy.reservationSaved.toFixed(2) }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

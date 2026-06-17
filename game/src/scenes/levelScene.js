@@ -39,6 +39,7 @@ import { makeRng } from "../sim/rng.js";
 import { SINK_ROLES, ROLE } from "../services/catalog.js";
 import { getDifficulty } from "../save/difficulty.js";
 import { loadRun, saveRun, clearRun } from "../save/run.js";
+import { RESERVATION_PLANS } from "../economy/economy.js";
 
 export class LevelScene extends Scene {
   enter(payload) {
@@ -284,8 +285,25 @@ export class LevelScene extends Scene {
       this.palette.handleClick(input.x, input.y, this.budget);
     }
 
+    // ---- Company reserved-capacity buttons (consume the click before the world
+    // does, so buying a reservation never also places a building underneath). ----
+    let overReservation = false;
+    if (this._isFreerun && this.started && this._resBtns) {
+      for (const id of ["compute", "database"]) {
+        const r = this._resBtns[id];
+        if (r && this._hitRect(r, input.x, input.y)) {
+          overReservation = true;
+          if (input.leftDown) {
+            this.sim.buyReservation(id);
+            this._drainSim();
+          }
+          break;
+        }
+      }
+    }
+
     // ---- World interactions (only when not over UI and not panning) ----
-    if (!overUI && !this._panning) {
+    if (!overUI && !overReservation && !this._panning) {
       this._handleWorld(input);
     }
 
@@ -408,6 +426,8 @@ export class LevelScene extends Scene {
             dataLost: this.sim.realism.dataLost,
             peakConcurrent: this.sim.peakConcurrent,
             simDays: this.sim.simDays,
+            reservationSpend: this.sim.economy.reservationSpend,
+            reservationSaved: this.sim.economy.reservationSaved,
           }
         : null,
     });
@@ -763,6 +783,9 @@ export class LevelScene extends Scene {
 
     // Company (freerun) milestone checklist — the success model for this mode.
     if (this._isFreerun && this.started) this._renderMilestones(ctx, W, H);
+
+    // Company reserved-capacity purchasing (commitment risk).
+    if (this._isFreerun && this.started) this._renderReservations(ctx, W, H);
 
     // Operational telemetry (T7.6): SLO compliance, blast radius, RTO — the ops
     // numbers a real review grades. Shown once the shift is running.
@@ -1430,6 +1453,72 @@ export class LevelScene extends Scene {
     }
     ctx.stroke();
     ctx.restore();
+  }
+
+  // Company reserved-capacity panel (right side, below the slider/cash-out): two
+  // plans (compute, database). Buying pays an upfront (sunk) for a term discount —
+  // the SAA commitment-risk lesson. Clicks are consumed in update() via _resBtns.
+  _renderReservations(ctx, W, H) {
+    const eco = this.sim.economy;
+    const ids = ["compute", "database"];
+    const w = 192;
+    const x = W - w - 14;
+    let y = 214; // clear of the Cash Out button (168 + 30)
+    const bh = 38;
+    const gap = 8;
+    this._resBtns = {};
+
+    ctx.save();
+    ctx.textBaseline = "middle";
+    ctx.font = "700 10px system-ui, sans-serif";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.textAlign = "left";
+    ctx.fillText("🏦 RESERVED CAPACITY", x, y);
+    y += 12;
+
+    for (const id of ids) {
+      const plan = RESERVATION_PLANS[id];
+      const res = eco.reservations.find((r) => r.role === plan.role);
+      const active = !!res;
+      const daysLeft = active ? Math.max(0, Math.ceil(res.untilDay - this.sim.simDays)) : 0;
+      const afford = eco.canAfford(plan.upfront);
+      const rect = { x, y, w, h: bh };
+      this._resBtns[id] = rect;
+      const over = this._hitRect(rect, this.game.input.x, this.game.input.y);
+
+      ctx.fillStyle = active ? "rgba(58,90,58,0.55)" : over && afford ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+      roundRect(ctx, x, y, w, bh, 8);
+      ctx.fill();
+      ctx.strokeStyle = active ? PALETTE.good : afford ? "rgba(255,179,71,0.35)" : "rgba(255,255,255,0.06)";
+      ctx.lineWidth = active ? 1.5 : 1;
+      roundRect(ctx, x, y, w, bh, 8);
+      ctx.stroke();
+
+      ctx.textAlign = "left";
+      if (active) {
+        ctx.fillStyle = PALETTE.good;
+        ctx.font = "700 12px system-ui, sans-serif";
+        ctx.fillText("✓ " + plan.label.replace("Reserve ", ""), x + 10, y + 13);
+        ctx.fillStyle = PALETTE.textDim;
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.fillText("−" + Math.round(plan.discountPct * 100) + "% running  ·  " + daysLeft + "d left", x + 10, y + 27);
+      } else {
+        ctx.fillStyle = afford ? PALETTE.text : PALETTE.textFaint;
+        ctx.font = "700 12px system-ui, sans-serif";
+        ctx.fillText(plan.label, x + 10, y + 13);
+        ctx.fillStyle = afford ? PALETTE.textDim : PALETTE.textFaint;
+        ctx.font = "10px system-ui, sans-serif";
+        ctx.fillText("−" + Math.round(plan.discountPct * 100) + "% for " + plan.termDays + "d", x + 10, y + 27);
+        ctx.textAlign = "right";
+        ctx.fillStyle = afford ? PALETTE.accent : PALETTE.textFaint;
+        ctx.font = "700 12px system-ui, sans-serif";
+        ctx.fillText("$" + plan.upfront, x + w - 10, y + 20);
+      }
+      y += bh + gap;
+    }
+    ctx.restore();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
 
   // Sandbox revenue-reinvestment slider. Horizontal track in the top-right area.
