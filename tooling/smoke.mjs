@@ -714,6 +714,20 @@ const simDepth = await page.evaluate(async () => {
   };
 });
 
+// Sim-depth: right-sizing / tech-debt drift — a Building carries a `drift` field
+// and the bill applies a running-cost surcharge that scales with it.
+const drift = await page.evaluate(async () => {
+  const gm = await import("./src/grid/grid.js");
+  const cat = await import("./src/services/catalog.js");
+  const bill = await import("./src/economy/billing.js");
+  const g = new gm.Grid(6, 6);
+  const b = g.place(cat.SERVICES.ec2, 2, 2);
+  const hasField = b.drift === 0;
+  b.drift = 0; const burn0 = bill.BillMeter.runningBurn(g);
+  b.drift = 1; const burn1 = bill.BillMeter.runningBurn(g);
+  return { hasField, surcharges: burn1 > burn0 };
+});
+
 // Company Run Report: cashing out a freerun run hands the results scene a
 // company-shaped payload (mode + milestone eval + ops scorecard) so it renders
 // the dedicated report instead of the scenario verdict.
@@ -782,6 +796,7 @@ console.log("rightWin:", JSON.stringify(rightWin));
 console.log("regionDR:", JSON.stringify(regionDR));
 console.log("runReport:", JSON.stringify(runReport));
 console.log("simDepth:", JSON.stringify(simDepth));
+console.log("drift:", JSON.stringify(drift));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -939,6 +954,8 @@ if (!simDepth.price)  problems.push("sim-depth: price_hike should inflate the bi
 if (!simDepth.noisy)  problems.push("sim-depth: noisy_neighbor should derate capacity");
 if (!simDepth.cert)   problems.push("sim-depth: cert_expiry should set an edge drop rate");
 if (!simDepth.depOut) problems.push("sim-depth: dependency_outage should disable only the targeted service");
+if (!drift.hasField)   problems.push("sim-depth: Building should carry a drift field");
+if (!drift.surcharges) problems.push("sim-depth: a drifted tile should raise the running burn (right-sizing surcharge)");
 
 console.log("phase4:", JSON.stringify(phase4));
 

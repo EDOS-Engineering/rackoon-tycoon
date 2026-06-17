@@ -662,6 +662,24 @@ export class LevelScene extends Scene {
 
     drawBuildings(ctx, this.grid, this.time);
 
+    // Sim-depth: a small amber "drift" badge on tiles that have accrued right-
+    // sizing waste (over-/under-provisioned), so it's actionable without hovering.
+    for (const b of this.grid.buildings.values()) {
+      if (b.disabled || (b.drift || 0) <= 0.5) continue;
+      const bx = b.col * TILE + TILE * 0.72;
+      const by = b.row * TILE + TILE * 0.28;
+      ctx.save();
+      ctx.globalAlpha = 0.5 + 0.5 * Math.min(1, b.drift);
+      ctx.font = "700 13px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = PALETTE.warn;
+      ctx.fillText("⚙", bx, by);
+      ctx.restore();
+    }
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+
     // Packets on top of buildings.
     for (const p of this.packets) {
       drawPacket(ctx, p.renderX(alpha), p.renderY(alpha), {
@@ -828,8 +846,16 @@ export class LevelScene extends Scene {
       }
     }
 
+    // Sim-depth: right-sizing drift note (a wasteful, un-tended tile costs extra).
+    let driftNote = null;
+    if (svc.role !== "gate" && !b.invalid && (b.drift || 0) > 0.15) {
+      const dp = Math.round(b.drift * 100);
+      const low = (b.load || 0) < 0.3;
+      driftNote = `⚙ Drift ${dp}% — ${low ? "over-provisioned, right-size it" : "running hot, tech debt"}`;
+    }
+
     const tipLines = svc.examTip ? wrapText(svc.examTip, 34) : [];
-    const h = (live ? 62 : 46) + lines.length * 15 + (tipLines.length > 0 ? 6 + tipLines.length * 15 : 0);
+    const h = (live ? 62 : 46) + (driftNote ? 16 : 0) + lines.length * 15 + (tipLines.length > 0 ? 6 + tipLines.length * 15 : 0);
 
     // Keep on screen.
     const W = this.game.canvas.cssW;
@@ -856,6 +882,11 @@ export class LevelScene extends Scene {
     if (live) {
       ctx.fillStyle = liveColor;
       ctx.fillText(live, x + 12, ty);
+      ty += 16;
+    }
+    if (driftNote) {
+      ctx.fillStyle = PALETTE.warn;
+      ctx.fillText(driftNote, x + 12, ty);
       ty += 16;
     }
     ctx.fillStyle = PALETTE.textDim;

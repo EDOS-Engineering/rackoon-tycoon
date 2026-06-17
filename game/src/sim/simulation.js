@@ -39,6 +39,10 @@ import { Telemetry } from "./telemetry.js";
 // "freerun" company that runs until bankruptcy/quit and is judged on milestones.
 export const MODE = { SCENARIO: "scenario", FREERUN: "freerun" };
 
+// Sim-depth: seconds of compressed sim time for right-sizing drift to ease toward
+// its utilization-derived target (slow — drift is a creeping pressure, not a snap).
+const DRIFT_TAU = 16;
+
 export class Simulation {
   // `opts`: { level, grid, gateKeys, rng, budget }. The grid arrives pre-seeded
   // (gates + any pre-placed buildings) so the host owns placement; the sim owns
@@ -186,6 +190,9 @@ export class Simulation {
     this.loadModel.measure(this.grid, this.packets);
     this.loadModel.update(this.grid, dt);
 
+    // Sim-depth: right-sizing / tech-debt drift from each tile's utilization.
+    this._updateDrift(dt);
+
     // Advance packets, then evaluate win/lose.
     this._updatePackets(dt);
     if (this.packets.length > this.peakConcurrent) this.peakConcurrent = this.packets.length;
@@ -298,6 +305,28 @@ export class Simulation {
     // An AZ failure is survived by azResilient (Multi-AZ) services.
     if (b && b.service.azResilient) return false;
     return this.events.isTileDisabled(c, r);
+  }
+
+  // Sim-depth: ease each tile's right-sizing DRIFT (0..1) toward a target derived
+  // from its utilization. An idle / over-provisioned tile (load far below 1) is
+  // wasteful → drift climbs; a healthily-loaded tile is well-sized → drift decays;
+  // a chronically-hot tile accrues some tech debt. Drift feeds a running-cost
+  // surcharge (billing.js), so the player is nudged to right-size — remove idle
+  // tiers, match capacity to demand. Pure (no rng) → deterministic.
+  _updateDrift(dt) {
+    const k = Math.min(1, dt / DRIFT_TAU);
+    for (const b of this.grid.buildings.values()) {
+      if (b.service.role === ROLE.GATE) { b.drift = 0; continue; }
+      if (b.disabled || b.invalid) continue; // frozen while offline/invalid
+      const load = b.load || 0;
+      let target;
+      if (load < 0.3) target = (0.3 - load) / 0.3; // over-provisioned / idle
+      else if (load <= 0.85) target = 0; // right-sized
+      else target = Math.min(1, (load - 0.85) / 0.6) * 0.6; // running hot → tech debt
+      b.drift += (target - b.drift) * k;
+      if (b.drift < 0) b.drift = 0;
+      else if (b.drift > 1) b.drift = 1;
+    }
   }
 
   // True if a building's structural dependency (catalog `dependsOn`) is satisfied
