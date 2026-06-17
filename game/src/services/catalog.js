@@ -385,6 +385,45 @@ export const SERVICES = {
     examTip:
       "Aurora Limitless uses distributed transactions across shard nodes. Choose it only when write throughput genuinely exceeds a single writer's maximum ACU ceiling. Cost is significantly higher than SV2.",
   },
+
+  // ---- Integration / decoupling ----
+  sqs: {
+    id: "sqs",
+    label: "SQS Queue",
+    short: "SQS",
+    emoji: "📬",
+    role: ROLE.EDGE,
+    color: "#c77dff",
+    cost: 30,
+    throughput: 220,
+    latency: 4,
+    // Buffering smooths bursts: a queue absorbs a traffic spike so downstream
+    // drains at its own pace instead of dropping. Reuses the spike-absorption
+    // field (the same mechanic WAF/Shield use) to model decoupling.
+    attackMitigation: 0.5,
+    placeable: true,
+    blurb:
+      "Amazon SQS — managed message queue. Decouples producers from consumers and buffers bursts, so a spike doesn't overwhelm downstream. Place it between tiers to absorb load.",
+    examTip:
+      "SQS decouples + buffers: producers write, consumers poll at their own pace; spikes drain over time instead of dropping. Standard = high throughput, at-least-once, best-effort order; FIFO = exactly-once, ordered. SQS = pull queue for one consumer group; SNS = push pub/sub fan-out.",
+  },
+
+  sns: {
+    id: "sns",
+    label: "SNS Topic",
+    short: "SNS",
+    emoji: "📡",
+    role: ROLE.EDGE,
+    color: "#ff66cc",
+    cost: 30,
+    throughput: 220,
+    latency: 2,
+    placeable: true,
+    blurb:
+      "Amazon SNS — pub/sub topic. One published message fans out to many subscribers (queues, functions, endpoints). Wire it to multiple sinks for push-based, decoupled fan-out.",
+    examTip:
+      "SNS = pub/sub push fan-out to many subscribers; SQS = pull queue for one consumer group. Classic pattern: SNS → multiple SQS queues (fan-out + per-consumer buffering). EventBridge adds content-based routing + many AWS event sources.",
+  },
 };
 
 // Palette groups — drives the category-tab palette UI.
@@ -394,6 +433,7 @@ export const PALETTE_GROUPS = [
   { id: "compute",  label: "Compute",  ids: ["ec2", "lambda", "kinesis_streams"] },
   { id: "data",     label: "Data",     ids: ["kinesis_firehose", "s3"] },
   { id: "database", label: "DB",       ids: ["rds", "rds_multiaz", "rds_replica", "dynamodb", "aurora_sv2", "aurora_limitless"] },
+  { id: "integration", label: "Msg",   ids: ["sqs", "sns"] },
   { id: "security", label: "Security", ids: ["waf", "shield"] },
 ];
 

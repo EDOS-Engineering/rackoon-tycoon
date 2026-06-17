@@ -124,8 +124,11 @@ const catalog3b = await page.evaluate(async () => {
     rdsMAZResilient:   S.rds_multiaz?.azResilient,       // should be true
     aurSV2AutoScale:   S.aurora_sv2?.autoScale,          // should be true
     streamsReplayable: S.kinesis_streams?.replayable,    // should be true
-    groupCount:        cat.PALETTE_GROUPS.length,        // should be 5
+    groupCount:        cat.PALETTE_GROUPS.length,        // should be 6 (added Msg)
     allIds: cat.PALETTE_ORDER.length,                    // all placeable services
+    sqsBuffers:        S.sqs?.attackMitigation,          // decoupling smooths spikes
+    snsExists:         !!S.sns,
+    msgGroup:          cat.PALETTE_GROUPS.some((g) => g.id === "integration"),
   };
 });
 
@@ -169,11 +172,18 @@ const levels3c = await page.evaluate(async () => {
   const lck = m.LEVELS.locked_buckets;
   const cr = m.LEVELS.cache_rules;
   const rh = m.LEVELS.read_heavy;
+  const dd = m.LEVELS.decouple_drown;
+  const fo = m.LEVELS.fan_out;
   return {
     levelCount: m.LEVEL_ORDER.length,
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
-    lastIsReadHeavy: m.LEVEL_ORDER.at(-1) === "read_heavy",
+    lastIsFanOut: m.LEVEL_ORDER.at(-1) === "fan_out",
+    readHeavyNextDecouple: rh?.next === "decouple_drown",
+    decoupleNeedsSqs: (dd?.winRequires?.pathContainsAll || []).includes("sqs"),
+    fanOutNeedsSns: (fo?.winRequires?.pathContainsAll || []).includes("sns"),
+    fanOutMinSinks: fo?.winRequires?.fanOut?.minSinks,
+    fanOutSeedsTwoSinks: (fo?.seed || []).length >= 2,
     singleWriterNext: m.LEVELS.single_writer?.next === "mesh_bridge",
     meshNeedsTgw: (mb?.winRequires?.edgeTypeAny || []).includes("tgw"),
     // Phase 6 Secure sprint.
@@ -581,7 +591,10 @@ if (catalog3b.shieldMitigation !== 0.75) problems.push("Shield attackMitigation 
 if (!catalog3b.rdsMAZResilient)        problems.push("RDS Multi-AZ azResilient should be true");
 if (!catalog3b.aurSV2AutoScale)        problems.push("Aurora SV2 autoScale should be true");
 if (!catalog3b.streamsReplayable)      problems.push("Kinesis Streams replayable should be true");
-if (catalog3b.groupCount !== 5)        problems.push("PALETTE_GROUPS should have 5 groups");
+if (catalog3b.groupCount !== 6)        problems.push("PALETTE_GROUPS should have 6 groups (incl. Msg)");
+if (catalog3b.sqsBuffers !== 0.5)      problems.push("SQS should buffer spikes (attackMitigation 0.5)");
+if (!catalog3b.snsExists)              problems.push("SNS service missing");
+if (!catalog3b.msgGroup)               problems.push("PALETTE_GROUPS should include the integration/Msg group");
 if (levels3c.levelCount !== 12)     problems.push("LEVEL_ORDER should have 12 levels (incl. Phase 6 Secure + High-Perf sprints)");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");

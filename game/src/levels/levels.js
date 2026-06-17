@@ -444,7 +444,7 @@ export const LEVELS = {
       { id: "rds", col: 8, row: 6 },
     ],
     goalRequests: 80,
-    next: null, // end of the campaign chain (for now)
+    next: "decouple_drown",
     waves: [
       { name: "Warm-up",        duration: 16, rate: 0.9 },
       { name: "Read growth",    duration: 26, rate: 1.7 },
@@ -466,6 +466,82 @@ export const LEVELS = {
       "This workload is ~90% reads. The write primary is already on the board, but it can't serve all these reads alone — and scaling the writer up is the wrong (and pricey) answer.\n\nAdd an RDS Read Replica: an asynchronous read-only copy that offloads reads from the primary. Add more replicas to scale reads horizontally. (Multi-AZ is for failover, NOT read scaling — different tool.)\n\nA Read Replica needs its source primary present — the seeded RDS. Place a Read Replica (DB tab) and route the read traffic to it.\n\n⚠ WIN CONDITION: reads are served by an RDS Read Replica.\n\nRoute 80 to win.",
     examTip:
       "RDS Read Replicas = asynchronous, readable, scale READS (up to 15 for Aurora, 5 for RDS); promotable for DR. Multi-AZ = synchronous standby, NOT readable, for HA/failover. SAA tell: 'scale read traffic' → Read Replica; 'high availability / automatic failover' → Multi-AZ.",
+  },
+
+  // T6.4 — Domain: Resilient. Absorb a brutal spike with a queue between tiers
+  // (decoupling) instead of a synchronous path that drops under load.
+  decouple_drown: {
+    id: "decouple_drown",
+    name: "Decouple or Drown",
+    subtitle: "Buffer the burst — don't drop it",
+    cols: 16,
+    rows: 9,
+    budget: 2800,
+    spawnRate: 1.0,
+    gates: [{ col: 1, row: 4 }],
+    seed: [],
+    goalRequests: 80,
+    next: "fan_out",
+    waves: [
+      { name: "Calm",          duration: 16, rate: 0.8 },
+      { name: "Flash sale",    duration: 24, rate: 2.0 },
+      { name: "Stampede",      duration: 28, rate: 3.0 },
+      { name: "Aftermath",     duration: 20, rate: 1.6 },
+    ],
+    events: [
+      { at: 26, kind: "traffic_spike", duration: 16, warn: 6, magnitude: 2.6 },
+      { at: 60, kind: "traffic_spike", duration: 14, warn: 6, magnitude: 2.3 },
+    ],
+    slaMaxDropRate: 0.30,
+    // Win requires an SQS queue in the route to buffer the spike.
+    winRequires: {
+      pathContainsAll: ["sqs"],
+      requirementHint: "Put an SQS queue in the route (Msg tab) to decouple the tiers and buffer the spike",
+    },
+    intro:
+      "A flash sale is about to slam a synchronous request path. If producers talk straight to consumers, a spike overruns them and requests drop on the floor.\n\nDecouple with a queue. Amazon SQS sits between the tiers: producers enqueue instantly, consumers drain at their own pace. The burst is absorbed and smoothed instead of dropped — the foundation of resilient, loosely-coupled architectures.\n\nWire an SQS queue (Msg tab) into the route between the front and your compute.\n\n⚠ WIN CONDITION: an SQS queue sits in the route.\n\nRoute 80 to win.",
+    examTip:
+      "SQS decouples and buffers: it absorbs spikes so downstream isn't overwhelmed (consumers poll at their own rate; scale them with the queue depth). Standard = at-least-once, best-effort order; FIFO = exactly-once, ordered. Decoupling + Auto Scaling on queue depth is the canonical resilient pattern.",
+  },
+
+  // T6.5 — Domain: Resilient. One event, many consumers: pub/sub fan-out.
+  fan_out: {
+    id: "fan_out",
+    name: "Fan Out",
+    subtitle: "One event, many subscribers",
+    cols: 16,
+    rows: 10,
+    budget: 2800,
+    spawnRate: 0.95,
+    gates: [{ col: 1, row: 5 }],
+    // Two consumers are seeded (an analytics store + a database). The player
+    // publishes to both through an SNS topic.
+    seed: [
+      { id: "s3",       col: 13, row: 3 },
+      { id: "dynamodb", col: 13, row: 7 },
+    ],
+    goalRequests: 70,
+    next: null, // end of the campaign chain (for now)
+    waves: [
+      { name: "Warm-up",      duration: 18, rate: 0.9 },
+      { name: "Event flow",   duration: 28, rate: 1.5 },
+      { name: "Peak events",  duration: 28, rate: 2.1 },
+      { name: "Wind-down",    duration: 16, rate: 1.2 },
+    ],
+    events: [
+      { at: 32, kind: "traffic_spike", duration: 12, warn: 6, magnitude: 1.8 },
+    ],
+    slaMaxDropRate: 0.34,
+    // Win requires an SNS topic wired to at least 2 subscribers (sinks).
+    winRequires: {
+      pathContainsAll: ["sns"],
+      fanOut: { service: "sns", minSinks: 2 },
+      requirementHint: "Publish through an SNS topic and wire it to BOTH subscribers (the two seeded sinks) — pub/sub fan-out",
+    },
+    intro:
+      "One business event — an order placed — must reach several consumers at once: store it for analytics AND record it in the database. Wiring each producer to each consumer is a brittle tangle.\n\nSNS is a pub/sub topic: publish once, and it fans the message out to every subscriber. Add or remove consumers without touching the producer — decoupled, push-based fan-out.\n\nRoute through an SNS topic (Msg tab) and wire it to BOTH seeded subscribers.\n\n⚠ WIN CONDITION: an SNS topic delivers to at least 2 subscribers.\n\nRoute 70 to win.",
+    examTip:
+      "SNS = pub/sub push fan-out to many subscribers (SQS, Lambda, HTTP, email). SQS = pull queue for one consumer group. The classic durable fan-out is SNS → multiple SQS queues (each consumer gets its own buffered copy). EventBridge adds content-based filtering + SaaS/AWS event sources.",
   },
 
   // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
@@ -505,6 +581,8 @@ export const LEVEL_ORDER = [
   "locked_buckets",
   "cache_rules",
   "read_heavy",
+  "decouple_drown",
+  "fan_out",
 ];
 
 export const FIRST_LEVEL = "first_light";

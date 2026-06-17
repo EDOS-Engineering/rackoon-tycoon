@@ -531,6 +531,27 @@ export class LevelScene extends Scene {
       }
     }
 
+    // fanOut: a building of `service` (e.g. SNS) must be wired to at least
+    // `minSinks` distinct sink/storage tiles — a structural pub/sub fan-out check
+    // (the single-path router can't express one-to-many on its own).
+    if (req.fanOut) {
+      const { service, minSinks } = req.fanOut;
+      let satisfied = false;
+      for (const b of this.grid.buildings.values()) {
+        if (b.service.id !== service) continue;
+        let sinks = 0;
+        for (const nk of this.grid.neighbors(Grid.key(b.col, b.row))) {
+          const [nc, nr] = Grid.parseKey(nk);
+          const nb = this.grid.getBuilding(nc, nr);
+          if (nb && SINK_ROLES.has(nb.service.role)) sinks++;
+        }
+        if (sinks >= (minSinks || 2)) { satisfied = true; break; }
+      }
+      if (!satisfied) {
+        return { ok: false, hint: req.requirementHint || "Fan out to more subscribers" };
+      }
+    }
+
     // Edge-type requirements (Phase 5 typed connections): inspect the connection
     // type of each wire the active path traverses. Lets a level demand e.g. a
     // Transit Gateway hop (Mesh vs Bridge) or a PrivateLink hop (private access).
