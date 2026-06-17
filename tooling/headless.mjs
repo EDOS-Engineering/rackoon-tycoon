@@ -449,5 +449,36 @@ console.log("company run:", JSON.stringify({ mode: co.mode, success: co.success,
 console.log("realism:", JSON.stringify({ slo: +cm.sloCompliance.toFixed(3), peakBlast: +cm.peakBlastRadius.toFixed(3), worstRto: +cm.worstRtoSec.toFixed(1), dataLost: cm.dataLost, warmRamp: warm1.toFixed(1) + "→" + warm2.toFixed(1) + " (base " + baseCap + ")" }));
 console.log("telemetry:", JSON.stringify({ demandNow: +tl.demandNow.toFixed(2), margin: +tl.marginPerSec.toFixed(2), sloBurn: +tl.sloBurn.toFixed(2), headroom: +tl.headroom.toFixed(2), minHeadroom: +telA.minHeadroom.toFixed(2), peakDemand: +telA.peakDemand.toFixed(2), deterministic: telDet }));
 console.log("simDepth:", JSON.stringify({ scripted: depthScripted, withDeck: depA.incidents, deterministic: JSON.stringify(depA) === JSON.stringify(depB), success: depA.success, failed: depA.failed }));
+
+// 13. Sim-depth: right-sizing / tech-debt drift. An idle (over-provisioned) tile
+//     accrues drift; a healthily-loaded one sheds it; drift adds a running-cost
+//     surcharge. Pure → deterministic.
+const dl = getLevel("first_light");
+const dg = new Grid(dl.cols, dl.rows);
+const dgk = [];
+for (const gt of dl.gates) { dg.place(SERVICES.route53, gt.col, gt.row); dgk.push(Grid.key(gt.col, gt.row)); }
+const [dgc, dgr] = Grid.parseKey(dgk[0]);
+const idle = dg.place(SERVICES.ec2, dgc + 1, dgr);
+const dsim = new Simulation({ level: dl, grid: dg, gateKeys: dgk, rng: makeRng(1), budget: dl.budget });
+idle.load = 0; // idle / over-provisioned
+for (let i = 0; i < 600; i++) dsim._updateDrift(1 / 60); // ~10s
+const driftIdle = idle.drift;
+if (!(driftIdle > 0.3)) problems.push("drift: an idle/over-provisioned tile should accrue right-sizing drift");
+idle.load = 0.55; // now well-sized
+for (let i = 0; i < 1200; i++) dsim._updateDrift(1 / 60);
+if (!(idle.drift < driftIdle * 0.5)) problems.push("drift: a healthily-loaded tile should shed drift");
+// Gate never drifts.
+const gateB = dg.getBuilding(...Grid.parseKey(dgk[0]));
+gateB.load = 0; dsim._updateDrift(1 / 60);
+if (gateB.drift !== 0) problems.push("drift: the gate should never accrue drift");
+// Bill surcharge scales with drift.
+const bg = new Grid(6, 6);
+const bd0 = bg.place(SERVICES.ec2, 2, 2);
+bd0.drift = 0; const burn0 = BillMeter.runningBurn(bg);
+bd0.drift = 1; const burn1 = BillMeter.runningBurn(bg);
+if (!(burn1 > burn0)) problems.push("drift: a drifted tile should cost more running burn");
+if (Math.abs(burn1 - burn0 * (1 + 0.6)) > 1e-9) problems.push("drift: surcharge should be driftSurcharge × base at full drift");
+
+console.log("drift:", JSON.stringify({ idleDrift: +driftIdle.toFixed(2), healthyDrift: +idle.drift.toFixed(2), burnNoDrift: +burn0.toFixed(3), burnFullDrift: +burn1.toFixed(3) }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

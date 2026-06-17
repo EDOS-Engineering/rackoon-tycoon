@@ -31,6 +31,7 @@ export class Building {
     this.dropping = false; // shedding requests this tick?
     this.disabled = false; // offline (e.g. its AZ failed)
     this.invalid = false; // structural dependency unmet (e.g. replica with no primary)
+    this.drift = 0; // sim-depth: right-sizing / tech-debt drift (0 well-sized .. 1 wasteful)
   }
 }
 

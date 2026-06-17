@@ -27,6 +27,11 @@ export const BILL = {
   //     service's data-processing/egress charge and stacks on top, AZ or not.
   crossAzPenalty: 8.0, // per-hop transfer multiplier added when a hop crosses an AZ
   auditMultiplier: 1.0, // mutated by the "cost audit" event
+  // Sim-depth: a tile's right-sizing DRIFT (0..1, tracked by the sim) adds up to
+  // this fraction of its base running cost as wasted spend — un-tended, over- or
+  // under-provisioned resources cost more. Right-sizing (removing idle tiers,
+  // matching capacity to demand) keeps it near zero. Core SAA cost lesson.
+  driftSurcharge: 0.6,
 };
 
 export class BillMeter {
@@ -54,10 +59,14 @@ export class BillMeter {
   }
 
   // Per-tile running burn ($/sec) for the current board, before audit multiplier.
+  // Each tile's base burn plus a right-sizing DRIFT surcharge (sim-depth): a tile
+  // left over-/under-provisioned (b.drift → 1) wastes up to `driftSurcharge` of
+  // its base cost on top.
   static runningBurn(grid) {
     let sum = 0;
     for (const b of grid.buildings.values()) {
-      sum += (b.service.cost || 0) / BILL.rateDivisor;
+      const base = (b.service.cost || 0) / BILL.rateDivisor;
+      sum += base * (1 + BILL.driftSurcharge * (b.drift || 0));
     }
     return sum;
   }
