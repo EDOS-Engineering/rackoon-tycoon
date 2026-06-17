@@ -282,8 +282,15 @@ export class TitleScene extends Scene {
     const w = padX * 2 + cols * cellW + (cols - 1) * colGap;
     const h = padY * 2 + rows * cellH + (rows - 1) * rowGap;
     const x = cx - w / 2;
+    // Anchor below the trigger, but clamp up so the whole panel stays on-screen
+    // (the canvas is a fixed viewport — no page scroll).
+    y = Math.max(70, Math.min(y, H - h - 16));
     this._missionsPanel = { x, y, w, h };
     this._levelBtns = [];
+
+    // Dim backdrop — reads as a modal; a click on it closes the dropdown.
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
+    ctx.fillRect(0, 0, W, H);
 
     ctx.fillStyle = "rgba(16,22,30,0.99)";
     roundRect(ctx, x, y, w, h, 12);
