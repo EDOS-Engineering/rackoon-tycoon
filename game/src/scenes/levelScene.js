@@ -988,21 +988,38 @@ export class LevelScene extends Scene {
     ctx.fillStyle = "rgba(8,11,15,0.74)";
     ctx.fillRect(0, 0, W, H);
 
-    const w = 580;
     const rows = [
       ["🎯", "Goal", "Route the target number of guests: gate → compute → database → back."],
       ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag from one service to another to wire — any distance, no adjacency needed; right-click a wire to cut."],
-      ["🔌", "Connection types", "Pick the wire type in the bar (or press C): VPC link, VPC Peering, Transit Gateway, PrivateLink. Each prices the hop differently — TGW always adds processing; PrivateLink avoids the cross-AZ penalty but must end at a service (sink)."],
-      ["💰", "AWS bill", "Buildings and data transfer burn your budget (top-left). Intra-AZ traffic is FREE; a wire crossing an AZ band (amber) costs 8× per hop. Multi-AZ resilience is real money — keep chatty tiers in one AZ. Don't let the budget hit $0."],
+      ["🔌", "Connection types", "Pick the wire type in the bar (or press C): VPC link, VPC Peering, Transit Gateway, PrivateLink. Each prices the hop differently — TGW always adds processing; PrivateLink avoids the cross-AZ penalty but must end at a sink."],
+      ["💰", "AWS bill", "Buildings + data transfer burn your budget (top-left). Intra-AZ traffic is FREE; a wire crossing an AZ band (amber) costs 8× per hop. Multi-AZ resilience is real money — keep chatty tiers in one AZ. Don't let the budget hit $0."],
       ["📈", "Waves", "Traffic ramps up in phases (top-right). Add capacity before the peaks arrive."],
       ["🔥", "Overload", "A building past its throughput queues up — latency climbs, then it drops guests. Watch the hot tiles."],
-      ["🗺️", "Zones", "The board spans AZ bands (us-rk-1a/b/c). A zone can fail and disable its tiles — spread compute & DBs across zones. Route 53 is a global service: it's immune to AZ failures and can wire directly to endpoints in any zone."],
+      ["🗺️", "Zones", "The board spans AZ bands (us-rk-1a/b/c). A zone can fail and disable its tiles — spread compute & DBs across zones. Route 53 is global: immune to AZ failures, wires to any zone."],
       ["⭐", "Score", "Stars reward uptime, cost-efficiency, and resilience. Win to unlock the next level."],
     ];
-    const rowH = 48;
-    const h = 96 + rows.length * rowH;
+
+    // Layout constants. Pre-wrap every description so each row claims exactly the
+    // vertical space it needs (fixes the old fixed-height rows overlapping).
+    const w = 620;
+    const pad = 26;
+    const labelX = 60; // text column (icon sits in the left gutter)
+    const lineH = 16;
+    const titleGap = 20; // label baseline → first description line
+    const rowGap = 16; // space between rows
+    const wrapChars = 76;
     const x = W / 2 - w / 2;
-    const y = Math.max(24, H / 2 - h / 2);
+
+    const items = rows.map(([icon, label, desc]) => ({
+      icon, label, lines: wrapText(desc, wrapChars),
+    }));
+    let bodyH = 0;
+    for (const it of items) bodyH += titleGap + it.lines.length * lineH + rowGap;
+
+    const headerH = 58;
+    const footerH = 40;
+    const h = headerH + bodyH + footerH;
+    const y = Math.max(20, H / 2 - h / 2);
 
     ctx.fillStyle = "rgba(18,24,32,0.98)";
     roundRect(ctx, x, y, w, h, 16);
@@ -1016,24 +1033,24 @@ export class LevelScene extends Scene {
     ctx.textBaseline = "top";
     ctx.fillStyle = PALETTE.accent;
     ctx.font = FONT.uiBig;
-    ctx.fillText("How to play", x + 24, y + 22);
+    ctx.fillText("How to play", x + pad, y + 22);
 
-    let ry = y + 62;
-    for (const [icon, label, desc] of rows) {
-      ctx.font = "20px system-ui, sans-serif";
+    let ry = y + headerH;
+    for (const it of items) {
+      ctx.font = "18px system-ui, sans-serif";
       ctx.fillStyle = PALETTE.text;
-      ctx.fillText(icon, x + 24, ry);
+      ctx.fillText(it.icon, x + pad, ry - 1);
       ctx.font = "700 13px system-ui, sans-serif";
       ctx.fillStyle = PALETTE.text;
-      ctx.fillText(label, x + 58, ry);
+      ctx.fillText(it.label, x + labelX, ry);
       ctx.font = FONT.uiSmall;
       ctx.fillStyle = PALETTE.textDim;
-      let dy = ry + 16;
-      for (const ln of wrapText(desc, 60)) {
-        ctx.fillText(ln, x + 58, dy);
-        dy += 15;
+      let dy = ry + titleGap;
+      for (const ln of it.lines) {
+        ctx.fillText(ln, x + labelX, dy);
+        dy += lineH;
       }
-      ry += rowH;
+      ry += titleGap + it.lines.length * lineH + rowGap;
     }
 
     ctx.textAlign = "center";
