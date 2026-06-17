@@ -10,7 +10,6 @@ export const DIFFICULTIES = [
   {
     id: "architect",
     name: "Architect",
-    tag: "Base",
     budgetMul: 1.0,
     speedMul: 1.0,
     blurb: "The standard, tuned pace. Recommended for your first runs.",
@@ -18,7 +17,6 @@ export const DIFFICULTIES = [
   {
     id: "senior",
     name: "Senior Architect",
-    tag: "Hard",
     budgetMul: 0.8,
     speedMul: 1.25,
     blurb: "Leaner budgets and ~25% faster traffic — less slack to react.",
@@ -26,7 +24,6 @@ export const DIFFICULTIES = [
   {
     id: "principal",
     name: "Principal Architect",
-    tag: "Brutal",
     budgetMul: 0.65,
     speedMul: 1.5,
     blurb: "Tight budgets and 50% faster everything. For seasoned architects.",

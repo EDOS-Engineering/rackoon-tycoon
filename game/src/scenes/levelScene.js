@@ -1196,7 +1196,7 @@ export class LevelScene extends Scene {
     ctx.font = FONT.uiSmall;
     ctx.fillStyle = PALETTE.textFaint;
     ctx.fillText(
-      "Difficulty: " + this.diff.name + "  ·  " + this.diff.tag + " — change on the title screen",
+      "Difficulty: " + this.diff.name + " — change on the title screen",
       x + pad,
       y + pad + 26
     );

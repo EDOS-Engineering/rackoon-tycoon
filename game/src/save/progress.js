@@ -8,12 +8,19 @@
 // `next` level (declared in levels.js). Everything is defensive: a missing or
 // corrupt blob falls back to a fresh profile so the game never wedges on save.
 
-import { load, save } from "./storage.js";
+import { load, save, clear } from "./storage.js";
 
 const KEY = "progress";
 
 function fresh() {
   return { unlocked: {}, best: {} };
+}
+
+// Wipe all campaign progress (unlocks, best scores, stars) and the best-routed
+// counter — a fresh start. Used by the title screen's "New Game" button.
+export function resetProgress() {
+  clear(KEY);
+  clear("bestRouted");
 }
 
 export function loadProgress() {

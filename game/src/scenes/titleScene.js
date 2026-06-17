@@ -7,7 +7,7 @@ import { PALETTE, FONT, BRAND } from "../theme.js";
 import { drawRaccoon, roundRect } from "../render/sprites.js";
 import { load } from "../save/storage.js";
 import { LEVEL_ORDER, FIRST_LEVEL, getLevel } from "../levels/levels.js";
-import { isUnlocked, bestFor, totalStars } from "../save/progress.js";
+import { isUnlocked, bestFor, totalStars, resetProgress } from "../save/progress.js";
 import { DIFFICULTIES, getDifficultyId, setDifficultyId } from "../save/difficulty.js";
 
 export class TitleScene extends Scene {
@@ -36,6 +36,15 @@ export class TitleScene extends Scene {
     this._levelBtns = []; // filled during render
     this._diffBtns = []; // difficulty chips, filled during render
     this._sandboxBtn = { x: 0, y: 0, w: 0, h: 0 };
+    this._newGameBtn = { x: 0, y: 0, w: 0, h: 0 };
+    this.confirmReset = false; // "New Game" confirmation modal open?
+    this._confirmYes = { x: 0, y: 0, w: 0, h: 0 };
+    this._confirmNo = { x: 0, y: 0, w: 0, h: 0 };
+  }
+
+  _in(r) {
+    const i = this.game.input;
+    return i.x >= r.x && i.x <= r.x + r.w && i.y >= r.y && i.y <= r.y + r.h;
   }
 
   update(dt) {
@@ -45,6 +54,30 @@ export class TitleScene extends Scene {
     for (const s of this.sparks) {
       s.x += s.spd * dt * 0.15;
       if (s.x > 1.1) s.x -= 1.2;
+    }
+
+    // New Game confirmation modal: it owns all input while open.
+    if (this.confirmReset) {
+      this._hot = false;
+      if (input.leftDown) {
+        if (this._in(this._confirmYes)) {
+          resetProgress();
+          this.best = load("bestRouted", 0);
+          this.totalStars = totalStars();
+          this.continueId = FIRST_LEVEL;
+          this.confirmReset = false;
+          return;
+        }
+        if (this._in(this._confirmNo)) { this.confirmReset = false; return; }
+      }
+      if (input.pressed("Escape")) this.confirmReset = false;
+      return;
+    }
+
+    // Hit-test the New Game button → open the confirmation modal.
+    if (input.leftDown && this._in(this._newGameBtn)) {
+      this.confirmReset = true;
+      return;
     }
 
     // Hit-test the sandbox button.
@@ -204,6 +237,89 @@ export class TitleScene extends Scene {
         ? "Rocky's stars: " + this.totalStars + " ★   •   Best routed: " + this.best
         : "Meet Rocky, your raccoon SRE. Build the cloud. Tame the traffic.";
     ctx.fillText(flavor, cx, H - 20);
+
+    // New Game button (top-right) + its confirmation modal (drawn on top).
+    this._renderNewGameBtn(ctx, W, H);
+    if (this.confirmReset) this._renderConfirm(ctx, W, H);
+  }
+
+  // Small top-right button that opens the reset-progress confirmation.
+  _renderNewGameBtn(ctx, W, H) {
+    const bw = 132, bh = 34;
+    const bx = W - bw - 18, by = 18;
+    this._newGameBtn = { x: bx, y: by, w: bw, h: bh };
+    const over = this._in(this._newGameBtn);
+
+    ctx.fillStyle = over ? "rgba(120,44,44,0.6)" : "rgba(40,28,28,0.55)";
+    roundRect(ctx, bx, by, bw, bh, 9);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,120,120,0.5)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, bx, by, bw, bh, 9);
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "600 13px system-ui, sans-serif";
+    ctx.fillStyle = over ? "#ffd6d6" : PALETTE.textDim;
+    ctx.fillText("↺  New Game", bx + bw / 2, by + bh / 2);
+    ctx.textBaseline = "alphabetic";
+  }
+
+  // Confirmation modal for wiping progress. Reset (destructive) / Cancel.
+  _renderConfirm(ctx, W, H) {
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, W, H);
+
+    const mw = 460, mh = 200;
+    const mx = W / 2 - mw / 2, my = H / 2 - mh / 2;
+    ctx.fillStyle = "rgba(20,26,34,0.98)";
+    roundRect(ctx, mx, my, mw, mh, 16);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,120,120,0.6)";
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, mx, my, mw, mh, 16);
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = PALETTE.text;
+    ctx.font = "800 20px system-ui, sans-serif";
+    ctx.fillText("Start a New Game?", W / 2, my + 44);
+
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.font = FONT.uiSmall;
+    const starsTxt = this.totalStars > 0 ? this.totalStars + " ★" : "your stars";
+    ctx.fillText("This erases ALL campaign progress and " + starsTxt + ".", W / 2, my + 78);
+    ctx.fillText("Difficulty and sandbox stay. This cannot be undone.", W / 2, my + 98);
+
+    // Buttons.
+    const bw = 150, bh = 44, gap = 24;
+    const byb = my + mh - bh - 24;
+    const yesX = W / 2 - bw - gap / 2;
+    const noX = W / 2 + gap / 2;
+    this._confirmYes = { x: yesX, y: byb, w: bw, h: bh };
+    this._confirmNo = { x: noX, y: byb, w: bw, h: bh };
+
+    const yesOver = this._in(this._confirmYes);
+    ctx.fillStyle = yesOver ? "#d65a5a" : "#b94a4a";
+    roundRect(ctx, yesX, byb, bw, bh, 11);
+    ctx.fill();
+    ctx.fillStyle = "#1a0e0e";
+    ctx.font = "800 15px system-ui, sans-serif";
+    ctx.textBaseline = "middle";
+    ctx.fillText("↺  Reset everything", yesX + bw / 2, byb + bh / 2);
+
+    const noOver = this._in(this._confirmNo);
+    ctx.fillStyle = noOver ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+    roundRect(ctx, noX, byb, bw, bh, 11);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, noX, byb, bw, bh, 11);
+    ctx.stroke();
+    ctx.fillStyle = PALETTE.text;
+    ctx.fillText("Cancel", noX + bw / 2, byb + bh / 2);
+    ctx.textBaseline = "alphabetic";
   }
 
   // A row of difficulty chips (T3.8). The selected tier is highlighted; clicking
@@ -218,9 +334,6 @@ export class TitleScene extends Scene {
     let x = cx - totalW / 2;
 
     ctx.textAlign = "center";
-    ctx.fillStyle = PALETTE.textFaint;
-    ctx.font = FONT.uiSmall;
-    ctx.fillText("DIFFICULTY", cx, y - 8);
 
     for (const d of DIFFICULTIES) {
       const sel = d.id === this.diffId;
@@ -247,7 +360,7 @@ export class TitleScene extends Scene {
       ctx.fillStyle = PALETTE.textFaint;
       ctx.font = "11px system-ui, sans-serif";
       ctx.fillText(
-        d.tag + "  ·  budget ×" + d.budgetMul + "  ·  speed ×" + d.speedMul,
+        "budget ×" + d.budgetMul + "  ·  speed ×" + d.speedMul,
         x + 12,
         y + 38
       );
@@ -268,9 +381,6 @@ export class TitleScene extends Scene {
     let x = cx - totalW / 2;
 
     ctx.textAlign = "center";
-    ctx.fillStyle = PALETTE.textFaint;
-    ctx.font = FONT.uiSmall;
-    ctx.fillText("CAMPAIGN", cx, y - 8);
 
     for (const id of LEVEL_ORDER) {
       const lvl = getLevel(id);
