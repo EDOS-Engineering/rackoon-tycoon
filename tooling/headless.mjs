@@ -14,6 +14,7 @@ import { WaveScheduler } from "../game/src/waves/scheduler.js";
 import { Grid } from "../game/src/grid/grid.js";
 import { SERVICES } from "../game/src/services/catalog.js";
 import { Simulation } from "../game/src/sim/simulation.js";
+import { MilestoneSet } from "../game/src/sim/milestones.js";
 import { DemandModel } from "../game/src/waves/demand.js";
 import { Economy } from "../game/src/economy/economy.js";
 import { IncidentDeck } from "../game/src/waves/incidents.js";
@@ -253,6 +254,62 @@ if (deckRunA.nan) problems.push("incident-deck sim run produced NaN");
 if (JSON.stringify(deckRunA) !== JSON.stringify(deckRunB)) problems.push("incident-deck sim run must be deterministic for a fixed seed");
 if (!(deckRunA.incidents > scriptedCount)) problems.push("incident deck should fire incidents beyond the scripted set during a run");
 
+// 9. Company mode (Phase 7 R6): milestone evaluation, freerun outcome rules, and
+//    snapshot/resume round-trip.
+const ms = new MilestoneSet([
+  { id: "a", label: "Serve 100", metric: "success", target: 100 },
+  { id: "b", label: "Earn $500", metric: "revenue", target: 500 },
+]);
+const mEval1 = ms.evaluate({ success: 100, revenue: 200 });
+if (!(mEval1.doneCount === 1 && !mEval1.allDone)) problems.push("milestones: partial completion mis-evaluated");
+if (!(Math.abs(mEval1.progress - (1 + 200 / 500) / 2) < 1e-9)) problems.push("milestones: aggregate progress wrong");
+const mEval2 = ms.evaluate({ success: 120, revenue: 600 });
+if (!mEval2.allDone) problems.push("milestones: allDone should be true when every target is met");
+if (new MilestoneSet([]).evaluate({}).allDone) problems.push("milestones: an empty set is not 'allDone'");
+
+// Build + step a real company (freerun) run, then snapshot → rebuild → restore.
+function buildCompany(seed, snap) {
+  const level = getLevel("company");
+  let grid, gateKeys;
+  if (snap) {
+    ({ grid, gateKeys } = Simulation.buildGridFromSnapshot(snap));
+  } else {
+    grid = new Grid(level.cols, level.rows);
+    gateKeys = [];
+    for (const gt of level.gates) { grid.place(SERVICES.route53, gt.col, gt.row); gateKeys.push(Grid.key(gt.col, gt.row)); }
+    const [gc, gr] = Grid.parseKey(gateKeys[0]);
+    grid.place(SERVICES.alb, gc + 1, gr);
+    grid.place(SERVICES.ec2, gc + 2, gr);
+    grid.place(SERVICES.rds, gc + 3, gr);
+    grid.addEdge(Grid.key(gc, gr), Grid.key(gc + 1, gr));
+    grid.addEdge(Grid.key(gc + 1, gr), Grid.key(gc + 2, gr));
+    grid.addEdge(Grid.key(gc + 2, gr), Grid.key(gc + 3, gr));
+  }
+  const sim = new Simulation({ level, grid, gateKeys, rng: makeRng(seed), budget: snap ? snap.economy.budget : level.budget });
+  if (snap) sim.applySnapshot(snap);
+  return sim;
+}
+const co = buildCompany(31);
+if (co.mode !== "freerun") problems.push("company: level should run in freerun mode");
+for (let i = 0; i < 1800; i++) { co.recomputeRoute(); co.step(1 / 60); co.drainEmitted(); }
+// Freerun never auto-wins on a routed goal — it stays PLAYING (or LOSE if broke).
+if (co.outcome === "win") problems.push("company: freerun should not auto-WIN on a goal");
+if (co.success <= 0) problems.push("company: a legal route should serve requests");
+const mEvalRun = co.evaluateMilestones();
+if (mEvalRun.total !== 4) problems.push("company: should evaluate its 4 milestones");
+
+// Snapshot → rebuild grid → restore: the run state survives a round-trip.
+const snap = co.snapshot();
+const co2 = buildCompany(snap.seed, snap);
+const sameState =
+  co2.success === co.success &&
+  co2.failed === co.failed &&
+  Math.round(co2.budget) === Math.round(co.budget) &&
+  Math.abs(co2.simTime - co.simTime) < 1e-6 &&
+  co2.grid.buildings.size === co.grid.buildings.size &&
+  co2.grid.edges.size === co.grid.edges.size;
+if (!sameState) problems.push("company: snapshot/restore should preserve the run state + board");
+
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
 console.log("headless run billTotal:", bill.totalSpent.toFixed(2));
@@ -266,5 +323,6 @@ console.log("sandbox demand run:", JSON.stringify({
 }));
 console.log("incident deck draws(seed101):", dkA.length, " firstGap:", firstGap.toFixed(1), " lastGap:", lastGap.toFixed(1));
 console.log("deck sim run:", JSON.stringify({ scripted: scriptedCount, withDeck: deckRunA.incidents, outcome: deckRunA.outcome, deterministic: JSON.stringify(deckRunA) === JSON.stringify(deckRunB) }));
+console.log("company run:", JSON.stringify({ mode: co.mode, success: co.success, budget: Math.round(co.budget), day: +co.simDays.toFixed(1), milestones: mEvalRun.doneCount + "/" + mEvalRun.total, snapshotRestored: sameState }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

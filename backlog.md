@@ -3,7 +3,7 @@
 > **Build your cloud empire. Tame the traffic.**
 > AWS SAA-C03 study guide reborn as a browser game. **Factorio meets RollerCoaster Tycoon.**
 
-**Status:** Phases 1–6 ✅ **complete.** Feature-complete campaign: **19 levels + sandbox**, every SAA-C03 domain ≥3 boss levels; 24 services / 6 palette tabs; typed connections (VPC/Peering/TGW/PrivateLink) with transitive routing; realistic cross-AZ economy; incidents (AZ failure, traffic spike, cost audit, spot interruption, region failure). Stack: zero-dep vanilla. **Next horizons:** **Phase 7** — living simulation (longer missions, dynamic/growing economy); **Phase 8** — the grand pivot: fork into a visual AWS SDK client.
+**Status:** Phases 1–6 ✅ **complete.** Feature-complete campaign: **19 levels + sandbox**, every SAA-C03 domain ≥3 boss levels; 24 services / 6 palette tabs; typed connections (VPC/Peering/TGW/PrivateLink) with transitive routing; realistic cross-AZ economy; incidents (AZ failure, traffic spike, cost audit, spot interruption, region failure). **Phase 7 ✅ R-series complete (R1–R6):** the simulation is now a standalone, headless, **seedable-deterministic** core (`sim/simulation.js`) driven by a living-economy **DemandModel** (diurnal/weekly/seasonal + compounding growth), an **Economy** ledger, a seeded escalating **IncidentDeck**, and a new **Company (free-run) mode** with business **milestones** + save/resume. Verified by `tooling/headless.mjs` (fast-run balancing harness) + the Playwright smoke. Stack: zero-dep vanilla. **Next:** T7.6 realism polish; **Phase 8** — the grand pivot: fork into a visual AWS SDK client.
 
 ## Progress log
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
@@ -467,8 +467,21 @@ the data-driven catalog/levels pattern):
   the deck is seeded-deterministic, telegraphed, escalating, and that a deck-driven sim run
   fires incidents beyond the scripted set + replays identically. headless 0; smoke 0/0.
   → `waves/incidents.js`, `waves/events.js`, `sim/simulation.js`, `levels/levels.js`, `tooling/headless.mjs`.
-- **R6 — Company/run state + milestones + save/resume** — `mode: campaign|company`;
-  milestone-based `evaluate` alongside the binary one; run snapshot/resume in `save/`. → **T7.4**
+- **R6 — Company/run state + milestones + save/resume. ✅ DONE (2026-06-17).** Added a
+  `mode: scenario|freerun` to the sim. **Freerun (company)** is endless: no routed goal,
+  bankruptcy is the only loss, success is measured by business **milestones**. New
+  `sim/milestones.js` `MilestoneSet.evaluate(metrics)` (pure) runs *alongside* the binary
+  `evaluate`; the sim exposes `metrics()`/`evaluateMilestones()`/`simDays` and flips
+  `milestonesComplete` when all are met (keeps PLAYING so you can keep growing; cash out to
+  bank a scored win). **Save/resume:** `Simulation.snapshot()` + `buildGridFromSnapshot()` +
+  `applySnapshot()` serialize the board (typed edges) + ledger + counters + clock + seed;
+  `save/run.js` persists one run; the title shows "Company Mode" / "Resume", the scene saves
+  on Esc and clears on cash-out/bankruptcy. New `company` freerun level (demand + deck + 4
+  milestones) + a milestone HUD + freerun cash-out. **Also fixed a real determinism bug**:
+  packet *speed* used `Math.random` (affects travel time → outcome) — now seeded, so runs are
+  genuinely reproducible. Headless asserts milestone eval, freerun outcome rules, and a
+  snapshot→rebuild→restore round-trip. → `sim/{simulation,milestones}.js`, `save/run.js`,
+  `entities/packet.js`, `scenes/{levelScene,titleScene}.js`, `levels/levels.js`, `tooling/headless.mjs`. headless 0; smoke 0/0.
 
 **Locked design decisions (owner):**
 - **Time model = time-compressed** — an abstract clock where one in-game "day" ≈ a few
@@ -479,7 +492,7 @@ the data-driven catalog/levels pattern):
   "free-run" company** mode (run until bankruptcy/quit, scored by peak). Player picks
   per mission. Shapes R6 (`mode: scenario|freerun`, milestone-or-peak `evaluate`).
 
-**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → ~~R4~~ ✅ → ~~R5~~ ✅ → **(R6 — next)**; T7.6 realism (latency SLOs,
+**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → ~~R4~~ ✅ → ~~R5~~ ✅ → ~~R6~~ ✅ — **R-series complete.** Remaining: T7.6 realism (latency SLOs,
 scaling-lag/warm-up in `LoadModel`, blast radius via the deck, RPO/RTO) rides on the
 stable seams. **Single best first step: R2.** Each step lands runnable + smoke-checked,
 and steps 3–6 each ship ≥1 headless balancing assertion.

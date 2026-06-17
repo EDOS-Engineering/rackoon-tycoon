@@ -23,7 +23,7 @@ import { Grid } from "../grid/grid.js";
 import { findRoundTrip, gateHasRoute } from "../grid/pathfind.js";
 import { Packet } from "../entities/packet.js";
 import { getConn } from "../services/connections.js";
-import { SINK_ROLES, ROLE } from "../services/catalog.js";
+import { SINK_ROLES, ROLE, SERVICES } from "../services/catalog.js";
 import { BillMeter, BILL } from "../economy/billing.js";
 import { Economy } from "../economy/economy.js";
 import { WaveScheduler } from "../waves/scheduler.js";
@@ -31,6 +31,11 @@ import { DemandModel } from "../waves/demand.js";
 import { LoadModel } from "../waves/load.js";
 import { EventDirector, zoneOfColumn } from "../waves/events.js";
 import { evaluate, OUTCOME } from "../economy/scoring.js";
+import { MilestoneSet } from "./milestones.js";
+
+// Run modes (R6): a bounded campaign "scenario" (binary win/lose), or an endless
+// "freerun" company that runs until bankruptcy/quit and is judged on milestones.
+export const MODE = { SCENARIO: "scenario", FREERUN: "freerun" };
 
 export class Simulation {
   // `opts`: { level, grid, gateKeys, rng, budget }. The grid arrives pre-seeded
@@ -64,6 +69,13 @@ export class Simulation {
     // drawn over time (on top of any scripted `events[]`).
     this.events = new EventDirector(level.events, level.cols, rng, level.deck);
     this.loadModel = new LoadModel(rng);
+
+    // Run mode + milestones (R6). Freerun is the endless "company" mode; its
+    // success is measured by ticking off business milestones, not a binary goal.
+    this.mode = level.mode === MODE.FREERUN ? MODE.FREERUN : MODE.SCENARIO;
+    this.milestones = new MilestoneSet(level.milestones || []);
+    this.milestonesComplete = false; // flips true the first time all are met
+    this.peakConcurrent = 0; // high-water mark of packets in flight (company stat)
 
     // Outcome + resilience tracking.
     this.outcome = OUTCOME.PLAYING; // PLAYING | WIN | LOSE
@@ -154,6 +166,7 @@ export class Simulation {
 
     // Advance packets, then evaluate win/lose.
     this._updatePackets(dt);
+    if (this.packets.length > this.peakConcurrent) this.peakConcurrent = this.packets.length;
     this._checkOutcome();
   }
 
@@ -254,10 +267,121 @@ export class Simulation {
     return false;
   }
 
+  // In-game days elapsed (company milestones read this). Uses the demand clock's
+  // day length when present, else a default compressed day.
+  get simDays() {
+    const dayLen = (this.demand && this.demand.s.dayLength) || 8;
+    return this.simTime / dayLen;
+  }
+
+  // The live metrics company milestones are evaluated against.
+  metrics() {
+    return {
+      success: this.success,
+      failed: this.failed,
+      revenue: this.economy.revenue,
+      lost: this.economy.lost,
+      budget: this.economy.budget,
+      eventsSurvived: this._eventsSurvived,
+      simDays: this.simDays,
+      peakConcurrent: this.peakConcurrent,
+    };
+  }
+
+  // Current milestone evaluation (company mode HUD + results read this).
+  evaluateMilestones() {
+    return this.milestones.evaluate(this.metrics());
+  }
+
+  // ---- Save / resume (R6) -------------------------------------------------
+  // A freerun company run can be snapshotted to disk and resumed later. The
+  // snapshot captures the board (buildings + typed edges), the ledger + counters,
+  // the clock, and the seed. Incident/wave timelines are NOT serialized — they
+  // restart fresh on resume, which is fine for a casual endless mode.
+  snapshot() {
+    const buildings = [];
+    for (const b of this.grid.buildings.values()) {
+      buildings.push({ id: b.service.id, col: b.col, row: b.row });
+    }
+    const edges = [];
+    this.grid.forEachEdge((c1, r1, c2, r2, type) => {
+      edges.push({ a: Grid.key(c1, r1), b: Grid.key(c2, r2), type });
+    });
+    return {
+      v: 1,
+      levelId: this.level.id,
+      mode: this.mode,
+      seed: this._rng.seed,
+      cols: this.level.cols,
+      rows: this.level.rows,
+      simTime: this.simTime,
+      economy: {
+        budget: this.economy.budget,
+        revenue: this.economy.revenue,
+        lost: this.economy.lost,
+        spent: this.economy.spent,
+      },
+      success: this.success,
+      failed: this.failed,
+      eventsSurvived: this._eventsSurvived,
+      peakConcurrent: this.peakConcurrent,
+      reinvestRate: this._reinvestRate,
+      gateKeys: this.gateKeys.slice(),
+      buildings,
+      edges,
+    };
+  }
+
+  // Rebuild a grid (+ gate keys) from a snapshot, for the host to hand back into
+  // a fresh Simulation before applySnapshot() restores the scalar run state.
+  static buildGridFromSnapshot(snap) {
+    const grid = new Grid(snap.cols, snap.rows);
+    for (const b of snap.buildings || []) {
+      const svc = SERVICES[b.id];
+      if (svc) grid.place(svc, b.col, b.row);
+    }
+    for (const e of snap.edges || []) grid.addEdge(e.a, e.b, e.type);
+    return { grid, gateKeys: (snap.gateKeys || []).slice() };
+  }
+
+  // Restore the scalar run state from a snapshot onto an already-built sim (whose
+  // grid came from buildGridFromSnapshot).
+  applySnapshot(snap) {
+    this.simTime = snap.simTime || 0;
+    this.economy.budget = snap.economy.budget;
+    this.economy.revenue = snap.economy.revenue || 0;
+    this.economy.lost = snap.economy.lost || 0;
+    this.economy.spent = snap.economy.spent || 0;
+    this.success = snap.success || 0;
+    this.failed = snap.failed || 0;
+    this._eventsSurvived = snap.eventsSurvived || 0;
+    this.peakConcurrent = snap.peakConcurrent || 0;
+    this._reinvestRate = snap.reinvestRate != null ? snap.reinvestRate : 0.5;
+    this._routeDirty = true;
+  }
+
   // Decide win/lose. Sets outcome + outcomeReason; the host owns the brief
   // end-of-round pause + transition to results.
   _checkOutcome() {
     if (this.outcome !== OUTCOME.PLAYING) return;
+
+    // Freerun (company) mode: there's no routed goal or wave finish — the run is
+    // endless. The only failure is bankruptcy; success is measured by milestones,
+    // which the player banks by cashing out. We flip a flag when all are met (so
+    // the HUD can celebrate) but keep PLAYING so they can keep growing.
+    if (this.mode === MODE.FREERUN) {
+      if (this.budget <= 0) {
+        this.outcome = OUTCOME.LOSE;
+        this.outcomeReason = "bankrupt";
+        return;
+      }
+      if (!this.milestonesComplete && this.evaluateMilestones().allDone) {
+        this.milestonesComplete = true;
+        this.emit({ kind: "sound", name: "win" });
+      }
+      return;
+    }
+
     const res = evaluate({
       budget: this.budget,
       success: this.success,
@@ -396,7 +520,7 @@ export class Simulation {
     for (const gk of this.gateKeys) {
       const trip = findRoundTrip(this.grid, gk, blocked);
       if (trip) {
-        this.packets.push(new Packet(trip.path, trip.sinkKey));
+        this.packets.push(new Packet(trip.path, trip.sinkKey, this._rng));
         return;
       }
     }

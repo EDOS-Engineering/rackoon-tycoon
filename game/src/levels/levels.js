@@ -787,6 +787,64 @@ export const LEVELS = {
     examTip:
       "Use this mode to explore service combinations without pressure. Build the same path with NAT Gateway vs VPC Endpoint and compare burn rates, or stress-test Aurora SV2's auto-scaling by wiring many packets through it.",
   },
+
+  // ---- Phase 7 R6: Company (free-run) mode ----
+  // An endless run scored on business milestones rather than a binary goal:
+  // demand grows, the bill compounds, incidents keep coming, and you bank the run
+  // by cashing out. Saved/resumed like a real long session. Not in LEVEL_ORDER.
+  company: {
+    id: "company",
+    name: "Company Mode",
+    subtitle: "Endless free-run — grow the business, hit your milestones",
+    mode: "freerun",
+    cols: 22,
+    rows: 12,
+    budget: 4000,
+    spawnRate: 0.7,
+    gates: [{ col: 1, row: 6 }],
+    seed: [],
+    goalRequests: 0, // endless — no routed goal
+    next: null,
+    waves: [{ name: "Operations", duration: 999999, rate: 1.0 }],
+    demand: {
+      dayLength: 9,
+      diurnalAmp: 0.6,
+      peakHour: 14,
+      weekendMul: 0.7,
+      seasonAmp: 0.2,
+      seasonDays: 28,
+      growthPerDay: 0.06,
+      growthCap: 8,
+    },
+    deck: {
+      firstAt: 16,
+      baseInterval: 18,
+      intervalDecay: 0.9,
+      minInterval: 10,
+      warn: 6,
+      cooldown: 14,
+      maxActive: 2,
+      cards: [
+        { kind: "traffic_spike", weight: 3, duration: [6, 10], magnitude: [1.5, 2.1] },
+        { kind: "az_failure", weight: 2, duration: [8, 13] },
+        { kind: "cost_audit", weight: 2, duration: [10, 15], magnitude: [1.4, 1.8] },
+        { kind: "spot_interruption", weight: 1, duration: [6, 10] },
+      ],
+    },
+    // Business milestones (metric ∈ Simulation.metrics()). Hit them all, then cash
+    // out to bank a scored win — or keep growing.
+    milestones: [
+      { id: "served", label: "Serve 200 requests", metric: "success", target: 200 },
+      { id: "revenue", label: "Bank $3,000 revenue", metric: "revenue", target: 3000 },
+      { id: "uptime", label: "Weather 5 incidents", metric: "eventsSurvived", target: 5 },
+      { id: "tenure", label: "Reach day 10", metric: "simDays", target: 10 },
+    ],
+    slaMaxDropRate: 0.6,
+    intro:
+      "Company Mode — you run the business now. There's no finish line: demand grows day over day, the AWS bill compounds, and incidents keep coming. Survive (don't go bankrupt) and grow.\n\nHit the four business milestones (top-left), then Cash Out to bank a scored win — or keep going and push your peak higher. Your run is saved automatically when you leave: come back any time to Resume.\n\nUse the reinvestment slider (top-right) to feed revenue back into the budget and fund expansion. Spread across AZs, decouple with queues, cache the hot paths — this is where the whole toolkit pays off.",
+    examTip:
+      "Real architecture is never 'done'. Cost, resilience, and performance are continuous trade-offs you re-tune as load grows — exactly what the SAA-C03 'well-architected' mindset rewards.",
+  },
 };
 
 // Campaign order (drives unlock chain + level-select on the title screen).

@@ -15,13 +15,17 @@ import { Grid, TILE } from "../grid/grid.js";
 let NEXT_ID = 1;
 
 export class Packet {
-  constructor(path, sinkKey, speed = 4.2) {
+  // `rng` is the seedable sim RNG. Speed variation affects travel time → the
+  // win/lose outcome, so it MUST come from the seeded stream for a reproducible,
+  // headless-balanceable run. `bob`/`hue` are cosmetic (render-only, never read by
+  // sim logic), so they can stay on Math.random without breaking determinism.
+  constructor(path, sinkKey, rng = Math.random, speed = 4.2) {
     this.id = NEXT_ID++;
     this.path = path; // ["c,r", ...] full round-trip
     this.sinkKey = sinkKey;
     this.sinkIndex = path.indexOf(sinkKey);
     this.t = 0; // float position along path (0..path.length-1)
-    this.speed = speed * (0.85 + Math.random() * 0.3); // slight variation
+    this.speed = speed * (0.85 + rng() * 0.3); // slight variation (seeded)
     this.status = "travel";
     this.bob = Math.random() * Math.PI * 2; // little vertical wiggle phase
     this.hue = Math.random(); // tiny color variation among guests

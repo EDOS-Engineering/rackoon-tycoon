@@ -38,6 +38,7 @@ import { score, azSpread, OUTCOME } from "../economy/scoring.js";
 import { makeRng } from "../sim/rng.js";
 import { SINK_ROLES, ROLE } from "../services/catalog.js";
 import { getDifficulty } from "../save/difficulty.js";
+import { loadRun, saveRun, clearRun } from "../save/run.js";
 
 export class LevelScene extends Scene {
   enter(payload) {
@@ -49,30 +50,40 @@ export class LevelScene extends Scene {
     this.diff = getDifficulty();
     this.speedMul = this.diff.speedMul;
 
-    // Build + seed the grid (gates, pre-placed buildings) before handing it to
-    // the sim, which owns everything that moves.
-    const grid = new Grid(level.cols, level.rows);
-    const gateKeys = [];
-    for (const g of level.gates) {
-      grid.place(SERVICES.route53, g.col, g.row);
-      gateKeys.push(Grid.key(g.col, g.row));
-    }
-    for (const s of level.seed || []) {
-      const svc = getService(s.id);
-      if (svc) grid.place(svc, s.col, s.row);
+    // R6: a freerun company run can resume from a saved snapshot. Otherwise build
+    // a fresh board from the level's gates + seed.
+    const resumeSnap =
+      payload && payload.resume && level.mode === "freerun" ? loadRun() : null;
+    let grid, gateKeys;
+    if (resumeSnap && resumeSnap.levelId === level.id) {
+      ({ grid, gateKeys } = Simulation.buildGridFromSnapshot(resumeSnap));
+      this._rng = makeRng(resumeSnap.seed);
+    } else {
+      grid = new Grid(level.cols, level.rows);
+      gateKeys = [];
+      for (const g of level.gates) {
+        grid.place(SERVICES.route53, g.col, g.row);
+        gateKeys.push(Grid.key(g.col, g.row));
+      }
+      for (const s of level.seed || []) {
+        const svc = getService(s.id);
+        if (svc) grid.place(svc, s.col, s.row);
+      }
+      // Per-run seedable RNG drives all sim-path randomness so a run is
+      // reproducible and the headless harness is deterministic.
+      this._rng = makeRng();
     }
 
     // ---- Phase 7 (R1): the simulation core ----
-    // Per-run seedable RNG drives all sim-path randomness (incident zones, drop
-    // decisions) so a run is reproducible and the headless harness is deterministic.
-    this._rng = makeRng();
     this.sim = new Simulation({
       level,
       grid,
       gateKeys,
       rng: this._rng,
-      budget: Math.round(level.budget * this.diff.budgetMul),
+      budget: resumeSnap ? resumeSnap.economy.budget : Math.round(level.budget * this.diff.budgetMul),
     });
+    if (resumeSnap) this.sim.applySnapshot(resumeSnap);
+    this._isFreerun = level.mode === "freerun";
     this._endTimer = null; // armed when the outcome flips; null while playing
 
     // Interaction state.
@@ -99,7 +110,8 @@ export class LevelScene extends Scene {
     // ---- Briefing / intro-grace (Phase 2 polish) ----
     // The live sim (waves, bill, spawns) stays paused until the player presses
     // Begin, so the briefing can be read in full and the board pre-built calmly.
-    this.started = false;
+    // A resumed company run skips straight back into operations.
+    this.started = !!resumeSnap;
     this.briefingTime = 0; // counts up while the briefing is shown
     this.briefingAutoStart = 45; // failsafe: auto-begin after this long
     this.showHelp = false; // legend overlay (toggled with H)
@@ -166,8 +178,12 @@ export class LevelScene extends Scene {
       return;
     }
 
-    // ESC returns to title.
+    // ESC returns to title. A freerun company run is snapshotted on the way out
+    // (unless it's already over) so it can be resumed later.
     if (input.pressed("Escape")) {
+      if (this._isFreerun && this.started && this.outcome === OUTCOME.PLAYING) {
+        saveRun(this.sim.snapshot());
+      }
       this.game.scenes.go("title");
       return;
     }
@@ -323,6 +339,10 @@ export class LevelScene extends Scene {
   _goToResults() {
     if (this._sentResults) return;
     this._sentResults = true;
+
+    // A freerun run is over (cashed out or bankrupt) — discard its saved snapshot
+    // so it isn't offered for resume.
+    if (this._isFreerun) clearRun();
 
     // AZ spread: how many zones host the player's compute/sink buildings.
     const zoneCounts = new Array(AZ_COUNT).fill(0);
@@ -710,6 +730,9 @@ export class LevelScene extends Scene {
     // Sandbox reinvestment slider (only in sandbox mode, once shift started).
     if (!this.level.goalRequests && this.started) this._renderSandboxSlider(ctx, W);
 
+    // Company (freerun) milestone checklist — the success model for this mode.
+    if (this._isFreerun && this.started) this._renderMilestones(ctx, W, H);
+
     // Briefing overlay — stays up (sim paused) until the shift begins.
     if (!this.started) this._renderBriefing(ctx, W, H);
 
@@ -961,7 +984,9 @@ export class LevelScene extends Scene {
   _renderObjective(ctx, W) {
     if (!this.started && this.briefingTime < 0.3) return; // let the card own the first beat
     const isSandbox = !this.level.goalRequests;
-    const txt = isSandbox
+    const txt = this._isFreerun
+      ? "🏢 Company — " + this.success + " served   ·   grow the business, hit your milestones"
+      : isSandbox
       ? "∞ Sandbox — " + this.success + " routed   ·   gate → compute → database"
       : "🎯 Route " + this.success + " / " + this.level.goalRequests + "   ·   gate → compute → database";
     ctx.save();
@@ -1065,13 +1090,15 @@ export class LevelScene extends Scene {
   _renderEndButton(ctx, W, H) {
     // Hidden during the briefing, and once the round has resolved.
     if (!this.started || this.outcome !== OUTCOME.PLAYING) return;
-    // No Cash Out in Sandbox: there's no goal to wrap up, and it collides with the
-    // reinvestment slider. Esc returns to the menu instead.
-    if (!this.level.goalRequests) return;
-    const w = 130;
+    // No Cash Out in plain Sandbox: there's no goal to wrap up, and it collides
+    // with the reinvestment slider. But Company (freerun) mode DOES cash out to
+    // bank the run, placed below the slider so they don't overlap.
+    if (!this.level.goalRequests && !this._isFreerun) return;
+    const freerun = this._isFreerun;
+    const w = freerun ? 150 : 130;
     const h = 30;
     const x = W - w - 14;
-    const y = 92; // below the topology chip + wave bar
+    const y = freerun ? 168 : 92; // below the reinvest slider in freerun
     const over =
       this.game.input.x >= x &&
       this.game.input.x <= x + w &&
@@ -1079,18 +1106,19 @@ export class LevelScene extends Scene {
       this.game.input.y <= y + h;
     this._endRect = { x, y, w, h };
 
-    ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+    const ready = freerun && this.sim.milestonesComplete;
+    ctx.fillStyle = over ? PALETTE.bgPanelHi : ready ? "rgba(58,90,58,0.6)" : PALETTE.bgPanel;
     roundRect(ctx, x, y, w, h, 8);
     ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.strokeStyle = ready ? PALETTE.good : "rgba(255,255,255,0.08)";
     ctx.lineWidth = 1;
     roundRect(ctx, x, y, w, h, 8);
     ctx.stroke();
-    ctx.fillStyle = PALETTE.textDim;
+    ctx.fillStyle = ready ? PALETTE.good : PALETTE.textDim;
     ctx.font = FONT.uiSmall;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("Cash out ▸", x + w / 2, y + h / 2);
+    ctx.fillText(freerun ? "💰 Cash Out & Bank" : "Cash out ▸", x + w / 2, y + h / 2);
     ctx.textBaseline = "alphabetic";
 
     if (over && this.game.input.leftDown) {
@@ -1185,6 +1213,67 @@ export class LevelScene extends Scene {
       ty += lineH;
     }
     ctx.restore();
+  }
+
+  // Company-mode milestone checklist (top-left, below the HUD). Each row shows a
+  // tick/▢, the target, and a progress bar; the header celebrates when all met.
+  _renderMilestones(ctx, W, H) {
+    const ev = this.sim.evaluateMilestones();
+    if (!ev.total) return;
+    const w = 246;
+    const rowH = 30;
+    const padX = 12;
+    const headH = 26;
+    const h = headH + ev.total * rowH + 10;
+    const x = 14;
+    const y = 86; // under the budget HUD row
+
+    ctx.save();
+    ctx.fillStyle = "rgba(16,22,30,0.9)";
+    roundRect(ctx, x, y, w, h, 10);
+    ctx.fill();
+    ctx.strokeStyle = ev.allDone ? PALETTE.good : "rgba(255,255,255,0.08)";
+    ctx.lineWidth = ev.allDone ? 1.5 : 1;
+    roundRect(ctx, x, y, w, h, 10);
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.font = "700 11px system-ui, sans-serif";
+    ctx.fillStyle = ev.allDone ? PALETTE.good : PALETTE.accent;
+    ctx.fillText(
+      ev.allDone ? "✓ MILESTONES MET — CASH OUT!" : "🎯 MILESTONES  " + ev.doneCount + "/" + ev.total,
+      x + padX, y + headH / 2 + 2
+    );
+
+    let ry = y + headH;
+    for (const m of ev.items) {
+      const frac = m.target > 0 ? Math.min(1, m.value / m.target) : 1;
+      // Tick / box.
+      ctx.font = "13px system-ui, sans-serif";
+      ctx.fillStyle = m.done ? PALETTE.good : PALETTE.textFaint;
+      ctx.fillText(m.done ? "✓" : "▢", x + padX, ry + rowH / 2);
+      // Label.
+      ctx.font = "600 11px system-ui, sans-serif";
+      ctx.fillStyle = m.done ? PALETTE.text : PALETTE.textDim;
+      ctx.fillText(m.label, x + padX + 18, ry + 11);
+      // Progress bar.
+      const barX = x + padX + 18;
+      const barW = w - padX * 2 - 18;
+      const barY = ry + 19;
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      roundRect(ctx, barX, barY, barW, 4, 2);
+      ctx.fill();
+      if (frac > 0.01) {
+        ctx.fillStyle = m.done ? PALETTE.good : PALETTE.accent;
+        roundRect(ctx, barX, barY, barW * frac, 4, 2);
+        ctx.fill();
+      }
+      ry += rowH;
+    }
+    ctx.restore();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
   }
 
   // Sandbox revenue-reinvestment slider. Horizontal track in the top-right area.

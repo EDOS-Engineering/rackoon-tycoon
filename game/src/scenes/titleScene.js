@@ -11,6 +11,7 @@ import { load } from "../save/storage.js";
 import { LEVEL_ORDER, FIRST_LEVEL, getLevel } from "../levels/levels.js";
 import { isUnlocked, bestFor, totalStars, resetProgress } from "../save/progress.js";
 import { DIFFICULTIES, getDifficultyId, setDifficultyId } from "../save/difficulty.js";
+import { hasRun } from "../save/run.js";
 
 export class TitleScene extends Scene {
   enter() {
@@ -28,6 +29,8 @@ export class TitleScene extends Scene {
     this._levelBtns = []; // filled during render
     this._diffBtns = []; // difficulty chips, filled during render
     this._sandboxBtn = { x: 0, y: 0, w: 0, h: 0 };
+    this._companyBtn = { x: 0, y: 0, w: 0, h: 0 };
+    this.hasSavedRun = hasRun(); // is there a resumable company run?
     this._newGameBtn = { x: 0, y: 0, w: 0, h: 0 };
     this.confirmReset = false; // "New Game" confirmation modal open?
     this._confirmYes = { x: 0, y: 0, w: 0, h: 0 };
@@ -208,6 +211,12 @@ export class TitleScene extends Scene {
       }
     }
 
+    // Hit-test the Company-mode button (resumes a saved run if one exists).
+    if (input.leftDown && this._in(this._companyBtn)) {
+      this.game.scenes.go("level", { levelId: "company", resume: this.hasSavedRun });
+      return;
+    }
+
     // Hit-test difficulty chips (sets + persists the choice).
     if (input.leftDown) {
       for (const db of this._diffBtns) {
@@ -335,7 +344,9 @@ export class TitleScene extends Scene {
     this._renderDifficulty(ctx, cx, by + bh + 16, W);
     const sby = by + bh + 84;
     this._renderSandboxBtn(ctx, cx, sby, W);
-    const mby = sby + 46;
+    const cmy = sby + 44;
+    this._renderCompanyBtn(ctx, cx, cmy, W);
+    const mby = cmy + 44;
     this._renderMissionsButton(ctx, cx, mby, W);
 
     // New Game button (top-right). The missions dropdown + confirm modal draw on
@@ -595,6 +606,31 @@ export class TitleScene extends Scene {
     ctx.font = "600 13px system-ui, sans-serif";
     ctx.fillStyle = PALETTE.textDim;
     ctx.fillText("🏖  Sandbox (free build)", cx, y + bh / 2);
+    ctx.textBaseline = "alphabetic";
+  }
+
+  // Company (free-run) mode launcher. Shows "Resume" when a saved run exists.
+  _renderCompanyBtn(ctx, cx, y, W) {
+    const bw = 200;
+    const bh = 36;
+    const bx = cx - bw / 2;
+    const over = this._in({ x: bx, y, w: bw, h: bh });
+    this._companyBtn = { x: bx, y, w: bw, h: bh };
+    const resume = this.hasSavedRun;
+
+    ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+    roundRect(ctx, bx, y, bw, bh, 10);
+    ctx.fill();
+    ctx.strokeStyle = resume ? PALETTE.good : "rgba(120,180,255,0.35)";
+    ctx.lineWidth = resume ? 1.5 : 1;
+    roundRect(ctx, bx, y, bw, bh, 10);
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "600 13px system-ui, sans-serif";
+    ctx.fillStyle = resume ? PALETTE.good : PALETTE.textDim;
+    ctx.fillText(resume ? "▶  Resume Company run" : "🏢  Company Mode (free-run)", cx, y + bh / 2);
     ctx.textBaseline = "alphabetic";
   }
 }
