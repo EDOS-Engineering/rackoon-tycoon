@@ -407,6 +407,47 @@ Epoch makes the world *alive*.
   radius, scaling lag (warm-up), tech-debt/right-sizing drift, reserved-vs-on-demand
   commitment risk over the long run.
 
+#### Execution plan — architecture-first (from the Phase-7 architecture review)
+The helper sim modules are already clean seams (`billing`, `scheduler`, `load`,
+`events`, `scoring`), but the **simulation that composes them lives inside the
+1616-line `LevelScene.update()`**, interleaved with input/camera/UI and even
+`audio.play()` inside the tick; the economy is loose scene fields mutated in 4+
+places; demand is a finite step function; events are a fixed scripted timeline;
+sim-path `Math.random()` is unseeded; and there is **no headless sim**. So Phase 7
+is gated on extracting a composable, deterministic, headless-runnable sim core
+*first*. Refactors (keep zero-dep/vanilla, keep the 19 levels + smoke green, keep
+the data-driven catalog/levels pattern):
+
+- **R2 — Headless harness + seedable RNG. _(do FIRST; small, additive, low risk)_**
+  Add `sim/rng.js` (mulberry32, ~6 lines); thread it through the 3 sim-path randoms
+  (`events.js` AZ-zone pick, `load.js` drop decision — leave cosmetic randoms alone);
+  add `tooling/headless.mjs` that runs the sim modules under Node with no canvas.
+  This is the test surface for every later step; unblocks T7.5 (headless balancing).
+- **R1 — Extract a `Simulation` core. _(L; highest leverage)_** Lift `_tickSystems` +
+  the spawn loop + `_updatePackets` + `_checkOutcome` out of `LevelScene` into
+  `sim/simulation.js` with one `step(dt)`; no audio/render side-effects inside the
+  step (emit events the scene drains). Keep building runtime fields (`b.load`,
+  `b.disabled`) so the renderer is untouched; keep `s.budget/s.bill/s.success/...`
+  working via delegating getters so the smoke suite stays green. Land as a pure lift
+  (no behaviour change), verified headless + Playwright.
+- **R3 — `DemandModel` (`waves/demand.js`)** — `rateAt(t)` as a continuous signal
+  (base + diurnal + weekday/weekend + seasonality + `growth^t`). `WaveScheduler`
+  becomes a thin adapter; a level supplies `waves[]` (old) **or** a `demand{}` spec. → **T7.1**
+- **R4 — `Economy` ledger (`economy/economy.js`)** — move budget/revenue/lost +
+  all mutation behind explicit ops (`chargeBill/earn/penalize/reinvest/applyGrowth/
+  churn`); concentrates the scattered writes; home for compounding growth + churn. → **T7.2**
+- **R5 — `IncidentDeck`** — replace the scripted `EventDirector` timeline with a
+  seeded, weighted, telegraphed, escalating draw (cooldowns), **keeping** the existing
+  query interface (`isTileDisabled/spawnMultiplier/billMultiplier/banner`) so levels +
+  smoke don't notice; new kinds (viral spike, dependency outage, RPO/RTO restore) added data-driven. → **T7.3**
+- **R6 — Company/run state + milestones + save/resume** — `mode: campaign|company`;
+  milestone-based `evaluate` alongside the binary one; run snapshot/resume in `save/`. → **T7.4**
+
+**Order:** R2 → R1 → (R3, R4, R5 in parallel) → R6; T7.6 realism (latency SLOs,
+scaling-lag/warm-up in `LoadModel`, blast radius via the deck, RPO/RTO) rides on the
+stable seams. **Single best first step: R2.** Each step lands runnable + smoke-checked,
+and steps 3–6 each ship ≥1 headless balancing assertion.
+
 > **End of Phase 7:** levels feel like operating a real, growing AWS system over time
 > — demand breathes, money compounds, and the unexpected tests the architecture.
 
