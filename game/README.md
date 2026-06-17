@@ -23,9 +23,10 @@ a startup error, **hard-reload** (Cmd/Ctrl + Shift + R) to clear cached modules.
 ## How to play
 
 - **Title screen** → pick a **difficulty** (Architect / Senior / Principal — each
-  tightens the budget and speeds the round), choose a **campaign** level or the
-  **Sandbox**, then **PLAY / CONTINUE** (or press Enter / Space). **New Game**
-  (top-right) wipes progress after a confirm.
+  tightens the budget and speeds the round), then **PLAY / CONTINUE** a campaign
+  level, or launch the **Sandbox** (free build) or **Company Mode** (endless
+  free-run — **Resume** when a saved run exists). **New Game** (top-right) wipes
+  campaign progress after a confirm.
 - **Briefing:** every level opens paused on a briefing with the goal, the win
   condition, and an **exam tip** — build calmly, then press **Begin**.
 - **Build:** click a service in the bottom palette (6 tabs) to arm it, then click
@@ -53,18 +54,26 @@ a startup error, **hard-reload** (Cmd/Ctrl + Shift + R) to clear cached modules.
 
 ## What's in it
 
-- **17 campaign levels + an endless sandbox**, covering **every SAA-C03 domain**
-  (Secure / Resilient / High-Performing / Cost-Optimized). Each boss level
-  enforces one real exam decision through its win condition.
-- **23 AWS services** across 6 tabs — **Net** (ALB, CloudFront, NAT, VPC
+- **19 campaign levels + an endless sandbox + a Company (free-run) mode**,
+  covering **every SAA-C03 domain** (Secure / Resilient / High-Performing /
+  Cost-Optimized). Each boss level enforces one real exam decision through its
+  win condition.
+- **24 AWS services** across 6 tabs — **Net** (ALB, CloudFront, NAT, VPC
   Endpoint, ElastiCache), **Compute** (EC2 On-Demand/Reserved/Spot, Lambda,
   Kinesis Streams), **Data** (Firehose, S3, S3 Glacier), **DB** (RDS, Multi-AZ,
   Read Replica, DynamoDB, Aurora SV2/Limitless), **Msg** (SQS, SNS), **Security**
-  (WAF, Shield). Plus the Route 53 gate.
+  (WAF, Shield, Secrets Manager). Plus the Route 53 gate.
 - **Typed connections** with cost, topology rules, and transitive-routing
   behavior; **realistic economy** (intra-AZ free, cross-AZ 8×, NAT processing,
   Gateway Endpoint ≈ free, cost audits); a structural **dependency model** (a
   Read Replica needs its source primary on the board).
+- **Living simulation (Phase 7):** the sim is a standalone, **headless,
+  seedable-deterministic** core. A continuous **demand curve** breathes traffic
+  over a compressed day/week/season with **compounding growth**; an **economy
+  ledger** books every dollar; a seeded, escalating **incident deck** draws
+  unscripted AZ failures / spikes / audits / Spot interruptions. **Company
+  (free-run) mode** is endless — survive bankruptcy, hit business **milestones**,
+  cash out to bank a scored win, and **resume** a saved run later.
 - Procedural **audio** (zero-dep Web Audio), placement **particles** + packet
   **trails**, and **exam-tip teaching cards** before and after each level.
 
@@ -96,18 +105,25 @@ game/
       pathfind.js        BFS round-trip routing + transitive-link rules
     entities/
       packet.js          request "guest": walks a path with smooth interpolation + trail
+    sim/                 the headless, seedable-deterministic simulation core (Phase 7)
+      simulation.js      the Simulation: owns economy/waves/demand/incidents/packets + step(dt)
+      milestones.js      company-mode milestone evaluation (alongside the binary win/lose)
+      rng.js             mulberry32 seedable PRNG (reproducible runs)
     services/
       catalog.js         data-driven AWS service catalog + wiring rules (canWire)
       connections.js     typed connections (VPC/Peering/TGW/PrivateLink): cost, topology, transitivity
     economy/
       billing.js         live AWS bill: running cost + data-transfer (cross-AZ penalty)
+      economy.js         money ledger: budget/revenue/lost behind named ops (spend/earn/…)
       scoring.js         win/lose evaluation + star scoring
     waves/
-      scheduler.js       wave timeline (escalating traffic phases)
+      scheduler.js       legacy wave timeline (escalating traffic phases)
+      demand.js          continuous demand curve (diurnal/weekly/seasonal + compounding growth)
       load.js            throughput/overload/drop model
-      events.js          incidents: AZ failure, traffic spike, cost audit, spot interruption
+      events.js          EventDirector: scripted + drawn incident lifecycle/queries
+      incidents.js       seeded IncidentDeck: weighted, telegraphed, escalating draws
     levels/
-      levels.js          data-driven level definitions (17 campaign + sandbox)
+      levels.js          data-driven level definitions (19 campaign + sandbox + company)
     render/
       sprites.js         procedural art: googly-eye services, guests, Rocky logo
       gridRenderer.js    floor, AZ bands, typed/animated wires, buildings, previews
@@ -117,10 +133,11 @@ game/
     save/
       storage.js         localStorage wrapper
       progress.js        campaign unlocks, best scores, reset
+      run.js             company (free-run) run snapshot: save / resume / clear
       difficulty.js      difficulty tiers (budget × speed)
     scenes/
-      titleScene.js      title: difficulty + level select + sandbox + New Game
-      levelScene.js      the core loop (build, wire, route, simulate, win/lose)
+      titleScene.js      title: living backdrop, difficulty, campaign/sandbox/company launchers
+      levelScene.js      render + input host; drives the Simulation (build, wire, route, win/lose)
       resultsScene.js    end-of-round report + exam tip
 ```
 
@@ -143,19 +160,30 @@ Chain levels with `next`, list them in `LEVEL_ORDER`, and add an `intro` +
 `examTip`. See existing boss levels (`leaky_pipe`, `mesh_bridge`, `private_lines`,
 `decouple_drown`, `cold_storage`, `right_price`, …) for patterns.
 
+A level can also opt into the Phase-7 living-simulation systems, all pure data:
+`demand{}` (a continuous demand curve), `deck{}` (a seeded incident deck),
+`mode: "freerun"` + `milestones[]` (endless company mode). See the `company`
+level for the full set.
+
 ## Scope & roadmap
 
 The campaign is feature-complete across all four SAA-C03 domains (Phases 1–6, 19
-levels). Two horizons are planned in [`../backlog.md`](../backlog.md):
+levels), and **Phase 7 (the living-simulation core, R1–R6) is done**. See
+[`../backlog.md`](../backlog.md) for the full history:
 
-- **Phase 7 — living simulation:** longer missions with time-varying demand, a
-  compounding/fluctuating economy, a richer "unforeseen circumstances" incident
-  deck, and a long-form "company" mode — operating a real, growing AWS system over
-  time, not just short exam puzzles.
+- **Phase 7 — living simulation (✅ done):** the sim was lifted out of the scene
+  into a standalone, **headless, seedable-deterministic** core (`sim/simulation.js`),
+  driven by a continuous **DemandModel** (diurnal/weekly/seasonal + compounding
+  growth), an **Economy** ledger, and a seeded, escalating **IncidentDeck** — plus a
+  **Company (free-run) mode** scored on **milestones** with **save/resume**.
+  Remaining: T7.6 realism polish (latency SLOs, scaling warm-up, blast radius, RPO/RTO).
 - **Phase 8 — grand pivot:** fork the engine into a *visual AWS SDK client* — the
   canvas topology becomes real AWS resources read live via the SDK (read-only
   first; the provisioning path is hard-gated on security + a real SDK dependency).
 
-A dev-only Playwright smoke test (loads the game, asserts no console/page errors,
-checks level/win-rule invariants) is in [`../tooling/`](../tooling/) and is **not**
-shipped with the game.
+Two dev-only test surfaces live in [`../tooling/`](../tooling/), **not** shipped
+with the game: **`headless.mjs`** fast-runs the pure sim modules under Node and
+asserts seeded determinism + demand/economy/incident/company invariants (the
+balancing surface for the sim core), and **`smoke.mjs`** is a Playwright browser
+test that loads the game, asserts no console/page errors, and checks level/win-rule
+invariants.

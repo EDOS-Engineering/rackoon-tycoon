@@ -41,15 +41,16 @@ Gap-driven SAA-C03 reference. Highlights:
 
 A grid builder + tower-defense routing sim. Place AWS service buildings, wire **Route 53 gate → compute → database**, and watch request guests flow while a live AWS bill draws down your budget. Completed round-trips earn revenue; dead-ended trips are lost; escalating waves and incidents (AZ failures, traffic spikes, cost audits, Spot interruptions) test your design. See **[`game/README.md`](game/README.md)** for full controls and architecture.
 
-**Status: feature-complete campaign.** **17 levels + an endless sandbox**, covering **every SAA-C03 exam domain** (Secure / Resilient / High-Performing / Cost-Optimized) — each boss level is a real architecture decision the exam tests. Highlights:
+**Status: feature-complete campaign + a living-simulation core.** **19 campaign levels + an endless sandbox + a Company (free-run) mode**, covering **every SAA-C03 exam domain** (Secure / Resilient / High-Performing / Cost-Optimized) — each boss level is a real architecture decision the exam tests. Highlights:
 
-- **23 AWS services** across 6 build-palette tabs (Net, Compute, Data, DB, Msg, Security), each with stats + an exam tip.
+- **24 AWS services** across 6 build-palette tabs (Net, Compute, Data, DB, Msg, Security), each with stats + an exam tip.
 - **Typed connections** — wires carry a real networking construct: **VPC link, VPC Peering, Transit Gateway, PrivateLink** — each with its own cost, topology rule, and **transitive-routing** behavior (peering is non-transitive; TGW is a transitive hub).
 - **Realistic economy** — per-tile running cost + data-transfer billing modeled on AWS: intra-AZ free, **cross-AZ 8×**, NAT processing ×8, Gateway Endpoint ≈ free; cost audits inflate the bill.
 - **Per-level win conditions** that enforce the lesson (reach S3 only via a Gateway Endpoint; serve reads from a Read Replica; buffer a spike through SQS; fan out via SNS; archive cold data to Glacier; buy steady compute Reserved, not On-Demand).
+- **Living simulation (Phase 7):** a standalone, **headless, seedable-deterministic** sim core driven by a continuous **demand curve** (daily/weekly/seasonal rhythm + compounding growth), an explicit **economy ledger**, and a seeded, escalating **incident deck** — plus a **Company (free-run) mode** scored on business **milestones** with **save/resume**.
 - **Difficulty tiers**, procedural audio (zero-dep Web Audio), particle/trail juice, a structural **dependency model** (a Read Replica needs its primary on the board), and exam-tip teaching cards before and after each level.
 
-See **[`backlog.md`](backlog.md)** for the full phase history and what's next (multi-region DR, a secrets tile, perf/QA pass).
+See **[`backlog.md`](backlog.md)** for the full phase history and what's next (T7.6 realism polish; the Phase 8 visual-SDK pivot).
 
 ---
 
@@ -77,19 +78,24 @@ See **[`backlog.md`](backlog.md)** for the full phase history and what's next (m
 | 4 | Procedural audio, particles/trails, exam tips, sandbox mode | ✅ done |
 | 5 | Typed connections (VPC / Peering / Transit Gateway / PrivateLink) + transitive routing | ✅ done |
 | 6 | Full SAA-C03 curriculum coverage — boss levels for every exam domain (19 levels) | ✅ done |
-| 7 | **Living simulation** — longer missions, time-varying demand, a compounding/fluctuating economy, a richer "unforeseen circumstances" incident deck, and a long-form "company" mode | 🔵 planned |
+| 7 | **Living simulation** — headless seedable sim core, time-varying **demand**, an **economy ledger**, a seeded escalating **incident deck**, and a long-form **Company (free-run) mode** with milestones + save/resume (R1–R6) | ✅ done |
 | 8 | **Grand pivot** — fork into a *visual AWS SDK client*: the canvas topology becomes real AWS resources read live via the SDK (read-only first), with a gated provisioning path | 🟣 vision |
 
-**Where this is heading.** Phases 1–6 made a complete SAA-C03 exam-prep game. Phase 7 grows it into a real simulation of operating a living, growing AWS system over time — for distributed-systems designers, not just exam-takers. Phase 8 is the long-term pivot: fork the engine into a visual AWS SDK/API client that reads (and eventually drives) live cloud accounts. The Phase 8 write path is hard-gated on security + a real dependency on the AWS SDK — read-only and dry-run by default. Full task breakdown in [`backlog.md`](backlog.md).
+**Where this is heading.** Phases 1–6 made a complete SAA-C03 exam-prep game. **Phase 7 (R1–R6, done)** grew it into a real simulation of operating a living, growing AWS system over time — the sim is now a pure, headless, seedable-deterministic core (fast-run + balanced via `tooling/headless.mjs`) with a continuous demand model, an economy ledger, an unscripted incident deck, and an endless milestone-scored company mode. Remaining Phase 7 work is realism polish (T7.6: latency SLOs, scaling warm-up, blast-radius, RPO/RTO). Phase 8 is the long-term pivot: fork the engine into a visual AWS SDK/API client that reads (and eventually drives) live cloud accounts — read-only and dry-run by default, the write path hard-gated on security + a real SDK dependency. Full task breakdown in [`backlog.md`](backlog.md).
 
 ## Development
 
-The game ships with **zero runtime dependencies**. A dev-only smoke test under `tooling/` uses Playwright (headless Chromium) to load the game, capture console/page errors, and screenshot the title and level scenes:
+The game ships with **zero runtime dependencies**. Two dev-only test surfaces live under `tooling/` (neither is shipped, neither affects the zero-dependency guarantee):
 
 ```bash
+# 1) Headless simulation harness — runs the pure sim modules under Node (no
+#    browser) and asserts seeded determinism + demand/economy/incident/company
+#    invariants. This is the fast-run balancing surface for the Phase 7 sim core.
+node tooling/headless.mjs
+
+# 2) Browser smoke test — Playwright (headless Chromium) loads the game, captures
+#    console/page errors, checks level/win-rule invariants, and screenshots scenes.
 python3 -m http.server 8000 &           # serve the repo
 cd tooling && npm install               # one-time: installs Playwright
-node smoke.mjs                          # loads the game, asserts no errors
+node smoke.mjs                          # back in repo root: node tooling/smoke.mjs
 ```
-
-`tooling/` is not part of the shipped game and does not affect its zero-dependency guarantee.
