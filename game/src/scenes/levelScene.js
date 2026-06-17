@@ -1419,6 +1419,9 @@ export class LevelScene extends Scene {
   _renderEndButton(ctx, W, H) {
     // Hidden during the briefing, and once the round has resolved.
     if (!this.started || this.outcome !== OUTCOME.PLAYING) return;
+    // No Cash Out in Sandbox: there's no goal to wrap up, and it collides with the
+    // reinvestment slider. Esc returns to the menu instead.
+    if (!this.level.goalRequests) return;
     const w = 130;
     const h = 30;
     const x = W - w - 14;

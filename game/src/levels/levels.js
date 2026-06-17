@@ -754,7 +754,7 @@ export const LEVELS = {
     events: [],
     slaMaxDropRate: 0.55,
     intro:
-      "Sandbox mode — no goals, no time limit, no loss conditions. Build any architecture you like and watch the traffic flow.\n\nAll 18 services are available. Experiment freely: try NAT vs VPC Endpoint cost, watch Shield absorb spikes, test Aurora SV2 auto-scaling under load.\n\nPress Cash Out (top-right) to return to the menu. The AWS bill still runs, so you'll see how different architectures affect your burn rate — experiment!",
+      "Sandbox mode — no goals, no time limit, no loss conditions. Build any architecture you like and watch the traffic flow.\n\nEvery service is available. Experiment freely: try NAT vs VPC Endpoint cost, watch Shield absorb spikes, test Aurora SV2 auto-scaling under load. Use the reinvestment slider (top-right) to feed revenue back into your budget.\n\nPress Esc to return to the menu. The AWS bill still runs, so you'll see how different architectures affect your burn rate — experiment!",
     examTip:
       "Use this mode to explore service combinations without pressure. Build the same path with NAT Gateway vs VPC Endpoint and compare burn rates, or stress-test Aurora SV2's auto-scaling by wiring many packets through it.",
   },
