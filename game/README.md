@@ -108,6 +108,7 @@ game/
     sim/                 the headless, seedable-deterministic simulation core (Phase 7)
       simulation.js      the Simulation: owns economy/waves/demand/incidents/packets + step(dt)
       milestones.js      company-mode milestone evaluation (alongside the binary win/lose)
+      realism.js         ops-realism tracker: latency-SLO, blast radius, RTO/RPO (T7.6)
       rng.js             mulberry32 seedable PRNG (reproducible runs)
     services/
       catalog.js         data-driven AWS service catalog + wiring rules (canWire)
@@ -175,8 +176,9 @@ levels), and **Phase 7 (the living-simulation core, R1–R6) is done**. See
   into a standalone, **headless, seedable-deterministic** core (`sim/simulation.js`),
   driven by a continuous **DemandModel** (diurnal/weekly/seasonal + compounding
   growth), an **Economy** ledger, and a seeded, escalating **IncidentDeck** — plus a
-  **Company (free-run) mode** scored on **milestones** with **save/resume**.
-  Remaining: T7.6 realism polish (latency SLOs, scaling warm-up, blast radius, RPO/RTO).
+  **Company (free-run) mode** scored on **milestones** with **save/resume**, and an
+  **operational-realism** layer (`sim/realism.js`): latency-SLO compliance, blast
+  radius, RTO/RPO, and auto-scaling warm-up lag, surfaced as live ops telemetry.
 - **Phase 8 — grand pivot:** fork the engine into a *visual AWS SDK client* — the
   canvas topology becomes real AWS resources read live via the SDK (read-only
   first; the provisioning path is hard-gated on security + a real SDK dependency).

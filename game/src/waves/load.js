@@ -23,6 +23,9 @@ const QUEUE_FILL = 1.0;
 const QUEUE_DRAIN = 2.2;
 // Heat easing toward the live load (so the color glides, no strobing).
 const HEAT_EASE = 6;
+// Auto-scaling warm-up time constant (seconds of compressed sim time): how fast
+// an autoScale tier's effective capacity ramps toward demand (T7.6 scaling lag).
+const WARMUP_TAU = 3.5;
 
 export class LoadModel {
   // `rng` is the seedable sim RNG (defaults to Math.random for back-compat).
@@ -69,13 +72,24 @@ export class LoadModel {
         b.dropping = false;
         continue;
       }
-      // autoScale (Aurora Serverless v2): effective capacity scales with demand
-      // up to 2× the base throughput, simulating ACU vertical auto-scaling.
-      const baseCap = Math.max(1, b.service.throughput);
-      const cap = b.service.autoScale
-        ? Math.min(baseCap * 2, Math.max(baseCap, (this._demand.get(keyOf(b)) || 0) * 1.1))
-        : baseCap;
       const demand = this._demand.get(keyOf(b)) || 0;
+      // autoScale (Aurora Serverless v2): effective capacity scales with demand
+      // up to 2× the base throughput, simulating ACU vertical auto-scaling — but
+      // with a WARM-UP LAG (T7.6): capacity ramps toward the demand-derived target
+      // over a time constant instead of snapping, so a sudden spike transiently
+      // overloads (latency + SLO take the hit) until the tier warms up. Fixed
+      // (non-autoscale) tiers keep their flat capacity.
+      const baseCap = Math.max(1, b.service.throughput);
+      let cap;
+      if (b.service.autoScale) {
+        const target = Math.min(baseCap * 2, Math.max(baseCap, demand * 1.1));
+        if (b._warmCap == null) b._warmCap = baseCap;
+        b._warmCap += (target - b._warmCap) * Math.min(1, dt / WARMUP_TAU);
+        cap = b._warmCap;
+        b.scaleFrac = (cap - baseCap) / baseCap; // 0..1 headroom in use, for tooltips
+      } else {
+        cap = baseCap;
+      }
       const load = demand / cap;
       if (b.load == null) b.load = 0;
 

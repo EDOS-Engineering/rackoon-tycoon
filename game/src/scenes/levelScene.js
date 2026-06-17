@@ -733,6 +733,10 @@ export class LevelScene extends Scene {
     // Company (freerun) milestone checklist — the success model for this mode.
     if (this._isFreerun && this.started) this._renderMilestones(ctx, W, H);
 
+    // Operational telemetry (T7.6): SLO compliance, blast radius, RTO — the ops
+    // numbers a real review grades. Shown once the shift is running.
+    if (this.started) this._renderTelemetry(ctx, W, H);
+
     // Briefing overlay — stays up (sim paused) until the shift begins.
     if (!this.started) this._renderBriefing(ctx, W, H);
 
@@ -1271,6 +1275,66 @@ export class LevelScene extends Scene {
       }
       ry += rowH;
     }
+    ctx.restore();
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+  }
+
+  // Operational-realism telemetry chip (bottom-left): SLO compliance, peak blast
+  // radius, and current/worst RTO. Color flips amber/red as the numbers degrade.
+  _renderTelemetry(ctx, W, H) {
+    const r = this.sim.realism;
+    const slo = r.sloCompliance;
+    const blast = r.peakBlastRadius;
+    const rtoNow = r.inOutage ? r._outageT : 0;
+    const rtoWorst = r.worstRtoSec;
+
+    const pad = 10;
+    const w = 250;
+    const hh = 56;
+    const x = 14;
+    const y = H - hh - 46; // clear the bottom-left "Study guide" corner link
+
+    ctx.save();
+    ctx.fillStyle = "rgba(16,22,30,0.86)";
+    roundRect(ctx, x, y, w, hh, 10);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, x, y, w, hh, 10);
+    ctx.stroke();
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.font = "700 10px system-ui, sans-serif";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.fillText("⚙  OPS TELEMETRY", x + pad, y + 13);
+
+    // SLO compliance.
+    const sloPct = Math.round(slo * 100);
+    const sloColor = slo >= 0.99 ? PALETTE.good : slo >= 0.95 ? PALETTE.warn : PALETTE.bad;
+    ctx.font = "700 12px system-ui, sans-serif";
+    ctx.fillStyle = sloColor;
+    ctx.fillText("SLO " + sloPct + "%", x + pad, y + 34);
+
+    // Blast radius (peak).
+    const blastColor = blast < 0.34 ? PALETTE.good : blast < 0.67 ? PALETTE.warn : PALETTE.bad;
+    ctx.fillStyle = blastColor;
+    ctx.fillText("blast " + Math.round(blast * 100) + "%", x + pad + 86, y + 34);
+
+    // RTO — show the live outage timer if down, else the worst recorded.
+    const down = r.inOutage;
+    ctx.fillStyle = down ? PALETTE.bad : rtoWorst > 0 ? PALETTE.warn : PALETTE.good;
+    const rtoTxt = down ? "RTO " + rtoNow.toFixed(0) + "s ▾" : "RTO " + rtoWorst.toFixed(0) + "s";
+    ctx.fillText(rtoTxt, x + pad + 170, y + 34);
+
+    // Footnote: RPO (data lost) if any.
+    ctx.font = "10px system-ui, sans-serif";
+    ctx.fillStyle = r.dataLost > 0 ? PALETTE.bad : PALETTE.textFaint;
+    ctx.fillText(
+      r.dataLost > 0 ? "⚠ " + r.dataLost + " requests lost in outage (RPO)" : "no data lost",
+      x + pad, y + 48
+    );
     ctx.restore();
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";

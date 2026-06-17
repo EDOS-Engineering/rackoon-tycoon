@@ -32,6 +32,7 @@ import { LoadModel } from "../waves/load.js";
 import { EventDirector, zoneOfColumn } from "../waves/events.js";
 import { evaluate, OUTCOME } from "../economy/scoring.js";
 import { MilestoneSet } from "./milestones.js";
+import { RealismTracker } from "./realism.js";
 
 // Run modes (R6): a bounded campaign "scenario" (binary win/lose), or an endless
 // "freerun" company that runs until bankruptcy/quit and is judged on milestones.
@@ -76,6 +77,12 @@ export class Simulation {
     this.milestones = new MilestoneSet(level.milestones || []);
     this.milestonesComplete = false; // flips true the first time all are met
     this.peakConcurrent = 0; // high-water mark of packets in flight (company stat)
+
+    // T7.6 operational realism: latency-SLO compliance, blast radius, RTO/RPO.
+    // `sloMs` is the per-request latency objective (a tile's served latency must
+    // land under it). Defaults to a reasonable target so the metric is always live.
+    this.sloMs = level.sloMs != null ? level.sloMs : 60;
+    this.realism = new RealismTracker();
 
     // Outcome + resilience tracking.
     this.outcome = OUTCOME.PLAYING; // PLAYING | WIN | LOSE
@@ -167,6 +174,21 @@ export class Simulation {
     // Advance packets, then evaluate win/lose.
     this._updatePackets(dt);
     if (this.packets.length > this.peakConcurrent) this.peakConcurrent = this.packets.length;
+
+    // T7.6: blast radius + RTO. Sum serving capacity (compute + sinks) and the
+    // portion currently offline (capacity-weighted), and feed route availability
+    // so a sustained no-route stretch after the service was up scores as downtime.
+    let totalCap = 0;
+    let downCap = 0;
+    for (const b of this.grid.buildings.values()) {
+      const role = b.service.role;
+      if (role !== ROLE.COMPUTE && !SINK_ROLES.has(role)) continue;
+      const cap = Math.max(1, b.service.throughput);
+      totalCap += cap;
+      if (b.disabled) downCap += cap;
+    }
+    this.realism.tick(dt, this.routeOk, totalCap, downCap);
+
     this._checkOutcome();
   }
 
@@ -274,7 +296,10 @@ export class Simulation {
     return this.simTime / dayLen;
   }
 
-  // The live metrics company milestones are evaluated against.
+  // The live metrics company milestones are evaluated against. Includes the T7.6
+  // operational-realism signals (sloCompliance is "higher is better", so it works
+  // directly as a milestone target; blast/RTO/dataLost are surfaced for telemetry
+  // + scoring).
   metrics() {
     return {
       success: this.success,
@@ -285,6 +310,10 @@ export class Simulation {
       eventsSurvived: this._eventsSurvived,
       simDays: this.simDays,
       peakConcurrent: this.peakConcurrent,
+      sloCompliance: this.realism.sloCompliance,
+      peakBlastRadius: this.realism.peakBlastRadius,
+      worstRtoSec: this.realism.worstRtoSec,
+      dataLost: this.realism.dataLost,
     };
   }
 
@@ -325,6 +354,7 @@ export class Simulation {
       failed: this.failed,
       eventsSurvived: this._eventsSurvived,
       peakConcurrent: this.peakConcurrent,
+      realism: this.realism.toJSON(),
       reinvestRate: this._reinvestRate,
       gateKeys: this.gateKeys.slice(),
       buildings,
@@ -356,6 +386,7 @@ export class Simulation {
     this.failed = snap.failed || 0;
     this._eventsSurvived = snap.eventsSurvived || 0;
     this.peakConcurrent = snap.peakConcurrent || 0;
+    this.realism.restore(snap.realism);
     this._reinvestRate = snap.reinvestRate != null ? snap.reinvestRate : 0.5;
     this._routeDirty = true;
   }
@@ -575,6 +606,9 @@ export class Simulation {
         // one). Latency comes from the sink building's live queue state. ----
         const reward = this._rewardFor(p);
         this.success++;
+        // T7.6: did this round-trip meet the latency SLO? (uses the sink's live
+        // served latency, the same signal the reward scales on.)
+        this.realism.onComplete(this._latencyOf(p), this.sloMs);
         // Book revenue; in sandbox/company mode reinvest a configurable fraction
         // of it straight back into the budget.
         const reinvest = this.level.goalRequests ? 0 : this._reinvestRate;
@@ -585,6 +619,8 @@ export class Simulation {
         const penalty = 6;
         this.economy.penalize(penalty);
         this.failed++;
+        // T7.6 RPO proxy: a drop while there's no working route is lost work.
+        if (this.realism.inOutage) this.realism.onOutageDrop();
         this.emit({ kind: "float", x: p.x, y: p.y, text: "drop", good: false });
       } else {
         live.push(p);
@@ -593,13 +629,19 @@ export class Simulation {
     this.packets = live;
   }
 
+  // The latency a completed request experienced — the serving sink's live latency
+  // (which climbs with its queue under load). Drives both reward and SLO checks.
+  _latencyOf(p) {
+    const [c, r] = Grid.parseKey(p.sinkKey);
+    const sink = this.grid.getBuilding(c, r);
+    return sink ? sink.latencyMs || sink.service.latency : 6;
+  }
+
   // Per-request reward: base, reduced as the serving database's latency climbs
   // under load. Healthy DB -> full reward; saturated DB -> a fraction.
   _rewardFor(p) {
     const base = 12;
-    const [c, r] = Grid.parseKey(p.sinkKey);
-    const sink = this.grid.getBuilding(c, r);
-    const latency = sink ? sink.latencyMs || sink.service.latency : 6;
+    const latency = this._latencyOf(p);
     // Map latency ~[2..90]ms to a [1.0..0.35] multiplier.
     const mul = clamp(1 - (latency - 6) / 120, 0.35, 1);
     return Math.max(3, Math.round(base * mul));

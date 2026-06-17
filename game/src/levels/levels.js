@@ -831,12 +831,15 @@ export const LEVELS = {
         { kind: "spot_interruption", weight: 1, duration: [6, 10] },
       ],
     },
+    // Per-request latency objective (T7.6): a served round-trip under this many ms
+    // counts as in-SLO. Saturated tiers (or cold auto-scalers warming up) blow it.
+    sloMs: 55,
     // Business milestones (metric ∈ Simulation.metrics()). Hit them all, then cash
     // out to bank a scored win — or keep growing.
     milestones: [
       { id: "served", label: "Serve 200 requests", metric: "success", target: 200 },
       { id: "revenue", label: "Bank $3,000 revenue", metric: "revenue", target: 3000 },
-      { id: "uptime", label: "Weather 5 incidents", metric: "eventsSurvived", target: 5 },
+      { id: "slo", label: "Hold latency SLO ≥ 95%", metric: "sloCompliance", target: 0.95 },
       { id: "tenure", label: "Reach day 10", metric: "simDays", target: 10 },
     ],
     slaMaxDropRate: 0.6,
