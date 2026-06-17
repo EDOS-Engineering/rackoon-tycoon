@@ -174,11 +174,15 @@ const levels3c = await page.evaluate(async () => {
   const rh = m.LEVELS.read_heavy;
   const dd = m.LEVELS.decouple_drown;
   const fo = m.LEVELS.fan_out;
+  const ss = m.LEVELS.serverless_spike;
   return {
     levelCount: m.LEVEL_ORDER.length,
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
-    lastIsFanOut: m.LEVEL_ORDER.at(-1) === "fan_out",
+    lastIsServerless: m.LEVEL_ORDER.at(-1) === "serverless_spike",
+    fanOutNextServerless: fo?.next === "serverless_spike",
+    serverlessNeedsLambda: (ss?.winRequires?.pathContainsAll || []).includes("lambda"),
+    serverlessExcludesEc2: (ss?.winRequires?.pathExcludes || []).includes("ec2"),
     readHeavyNextDecouple: rh?.next === "decouple_drown",
     decoupleNeedsSqs: (dd?.winRequires?.pathContainsAll || []).includes("sqs"),
     fanOutNeedsSns: (fo?.winRequires?.pathContainsAll || []).includes("sns"),
@@ -643,10 +647,13 @@ if (catalog3b.groupCount !== 6)        problems.push("PALETTE_GROUPS should have
 if (catalog3b.sqsBuffers !== 0.5)      problems.push("SQS should buffer spikes (attackMitigation 0.5)");
 if (!catalog3b.snsExists)              problems.push("SNS service missing");
 if (!catalog3b.msgGroup)               problems.push("PALETTE_GROUPS should include the integration/Msg group");
-if (levels3c.levelCount !== 14)     problems.push("LEVEL_ORDER should have 14 levels (incl. Phase 6 Secure + High-Perf + Resilient sprints)");
+if (levels3c.levelCount !== 15)     problems.push("LEVEL_ORDER should have 15 levels");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.lastIsFanOut)         problems.push("fan_out should be the last level");
+if (!levels3c.lastIsServerless)     problems.push("serverless_spike should be the last level");
+if (!levels3c.fanOutNextServerless) problems.push("fan_out.next should chain to serverless_spike");
+if (!levels3c.serverlessNeedsLambda) problems.push("serverless_spike should require Lambda in the route");
+if (!levels3c.serverlessExcludesEc2) problems.push("serverless_spike should exclude EC2 from the route");
 if (!levels3c.readHeavyNextDecouple) problems.push("read_heavy.next should chain to decouple_drown");
 if (!levels3c.decoupleNeedsSqs)     problems.push("decouple_drown should require an SQS queue");
 if (!levels3c.fanOutNeedsSns)       problems.push("fan_out should require an SNS topic");

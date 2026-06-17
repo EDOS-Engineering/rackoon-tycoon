@@ -521,7 +521,7 @@ export const LEVELS = {
       { id: "dynamodb", col: 13, row: 7 },
     ],
     goalRequests: 70,
-    next: null, // end of the campaign chain (for now)
+    next: "serverless_spike",
     waves: [
       { name: "Warm-up",      duration: 18, rate: 0.9 },
       { name: "Event flow",   duration: 28, rate: 1.5 },
@@ -542,6 +542,49 @@ export const LEVELS = {
       "One business event — an order placed — must reach several consumers at once: store it for analytics AND record it in the database. Wiring each producer to each consumer is a brittle tangle.\n\nSNS is a pub/sub topic: publish once, and it fans the message out to every subscriber. Add or remove consumers without touching the producer — decoupled, push-based fan-out.\n\nRoute through an SNS topic (Msg tab) and wire it to BOTH seeded subscribers.\n\n⚠ WIN CONDITION: an SNS topic delivers to at least 2 subscribers.\n\nRoute 70 to win.",
     examTip:
       "SNS = pub/sub push fan-out to many subscribers (SQS, Lambda, HTTP, email). SQS = pull queue for one consumer group. The classic durable fan-out is SNS → multiple SQS queues (each consumer gets its own buffered copy). EventBridge adds content-based filtering + SaaS/AWS event sources.",
+  },
+
+  // T6.9 — Domain: High-Performing. Spiky, event-driven, pay-per-use: serverless
+  // (Lambda + DynamoDB on-demand) instead of always-on EC2.
+  serverless_spike: {
+    id: "serverless_spike",
+    name: "Serverless Spike",
+    subtitle: "Bursty and idle — pay only when it runs",
+    cols: 16,
+    rows: 9,
+    budget: 2400,
+    spawnRate: 0.8,
+    gates: [{ col: 1, row: 4 }],
+    // DynamoDB (on-demand) is seeded as the data store. The player fronts it with
+    // Lambda — no idle EC2 fleet to pay for between spikes.
+    seed: [
+      { id: "dynamodb", col: 12, row: 4 },
+    ],
+    goalRequests: 70,
+    next: null, // end of the campaign chain (for now)
+    waves: [
+      { name: "Idle",          duration: 18, rate: 0.4 },
+      { name: "Sudden burst",  duration: 18, rate: 2.6 },
+      { name: "Quiet again",   duration: 18, rate: 0.4 },
+      { name: "Second burst",  duration: 18, rate: 2.8 },
+      { name: "Trail-off",     duration: 16, rate: 0.6 },
+    ],
+    events: [
+      { at: 22, kind: "traffic_spike", duration: 12, warn: 6, magnitude: 2.4 },
+      { at: 58, kind: "traffic_spike", duration: 12, warn: 6, magnitude: 2.6 },
+    ],
+    slaMaxDropRate: 0.32,
+    // Win requires a Lambda → DynamoDB serverless path, with no always-on EC2.
+    winRequires: {
+      sinkIs: ["dynamodb"],
+      pathContainsAll: ["lambda"],
+      pathExcludes: ["ec2"],
+      requirementHint: "Front DynamoDB with Lambda (Compute tab) — a serverless path with no always-on EC2 fleet",
+    },
+    intro:
+      "This workload is bursty: long idle stretches punctuated by sudden spikes. An always-on EC2 fleet sized for the peak sits idle (and billing) most of the time — and a fleet sized for the average drops the spikes.\n\nGo serverless. Lambda scales from zero to thousands of concurrent executions instantly and bills only while running. Pair it with DynamoDB on-demand, which scales capacity automatically with no provisioning. No idle servers, no capacity planning.\n\nWire Lambda (Compute tab) in front of DynamoDB. Leave EC2 out.\n\n⚠ WIN CONDITION: a Lambda → DynamoDB path, with no EC2.\n\nRoute 70 to win.",
+    examTip:
+      "Serverless = Lambda (event-driven, scales to zero, 15-min max, pay-per-ms) + DynamoDB on-demand (auto-scaling, no capacity planning) + API Gateway. Ideal for spiky/unpredictable load. Provisioned Concurrency removes cold starts for latency-sensitive paths. Spiky workload → serverless beats an idle EC2 fleet on cost and scale.",
   },
 
   // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
@@ -583,6 +626,7 @@ export const LEVEL_ORDER = [
   "read_heavy",
   "decouple_drown",
   "fan_out",
+  "serverless_spike",
 ];
 
 export const FIRST_LEVEL = "first_light";
