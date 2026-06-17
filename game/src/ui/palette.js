@@ -17,6 +17,7 @@ const PAD   = 12;  // bar padding
 const TOOL_W = 56; // wire / erase button width
 const TAB_H  = 26; // tab row height
 const TAB_GAP = 6;
+const TAB_W  = 68; // fixed tab width (fits the longest label, e.g. "SECURITY")
 const CONN_H = 22; // connection-type picker row height
 
 export class BuildPalette {
@@ -47,16 +48,24 @@ export class BuildPalette {
     const tools = ["__wire", "__erase"];
     const svcIds = grp.ids;
 
-    // Width: 2 tool buttons + separator + service buttons
+    // Layout: [tools] | [content], where the content area holds the tab row and
+    // the service row. The content width is the MAX of the (fixed) tab row and the
+    // current group's service row, so the bar width stays stable across groups and
+    // the 6 tabs always fit (no overflow when a group has few services).
     const toolBlockW = tools.length * TOOL_W + (tools.length - 1) * GAP;
     const sepW = 12;
     const svcBlockW = svcIds.length * BTN + Math.max(0, svcIds.length - 1) * GAP;
-    const totalW = toolBlockW + sepW + svcBlockW + PAD * 2;
+    const nTabs = PALETTE_GROUPS.length;
+    const tabRowW = nTabs * TAB_W + (nTabs - 1) * TAB_GAP;
+    const contentW = Math.max(svcBlockW, tabRowW);
+    const totalW = toolBlockW + sepW + contentW + PAD * 2;
     const barH = CONN_H + GAP + TAB_H + GAP + BTN + PAD * 2;
 
     const barX = cssW / 2 - totalW / 2;
     const barY = cssH - barH - 14;
     this._barRect = { x: barX, y: barY, w: totalW, h: barH };
+    const contentX = barX + PAD + toolBlockW + sepW;
+    this._sepX = contentX - sepW / 2; // divider between tools and content
 
     // Connection-type picker row (spans the inner width, chips centred).
     const connY = barY + PAD;
@@ -70,42 +79,27 @@ export class BuildPalette {
       ccx += cW + cGap;
     }
 
-    // Tab row (below the connection picker)
+    // Tab row — fixed-width tabs, centred in the content area.
     const tabY = connY + CONN_H + GAP;
-    const tabRowStartX = barX + PAD + toolBlockW + sepW;
-    let tx = tabRowStartX;
-    // Distribute tabs evenly across the service block width
-    const tabTotalW = svcBlockW + (PALETTE_GROUPS.length - 1) * TAB_GAP > 0
-      ? svcBlockW
-      : PALETTE_GROUPS.length * 48 + (PALETTE_GROUPS.length - 1) * TAB_GAP;
-    const tabW = Math.max(44, Math.floor((tabTotalW - (PALETTE_GROUPS.length - 1) * TAB_GAP) / PALETTE_GROUPS.length));
-
-    // Re-anchor tab row to be centered over service block
-    const tabsTotalW = PALETTE_GROUPS.length * tabW + (PALETTE_GROUPS.length - 1) * TAB_GAP;
-    const tabsStartX = tabRowStartX + svcBlockW / 2 - tabsTotalW / 2;
-    tx = tabsStartX;
+    let tx = contentX + (contentW - tabRowW) / 2;
     for (const g of PALETTE_GROUPS) {
-      this._tabRects.push({ id: g.id, x: tx, y: tabY, w: tabW, h: TAB_H });
-      tx += tabW + TAB_GAP;
+      this._tabRects.push({ id: g.id, x: tx, y: tabY, w: TAB_W, h: TAB_H });
+      tx += TAB_W + TAB_GAP;
     }
 
-    // Service + tool buttons row (below the tab row)
+    // Service row — centred in the content area, under the tabs.
     const btnY = tabY + TAB_H + GAP;
-    let x = barX + PAD;
-
-    // Tool buttons
-    for (const id of tools) {
-      this._rects.push({ id, x, y: btnY, w: TOOL_W, h: BTN });
-      x += TOOL_W + GAP;
+    let sx = contentX + (contentW - svcBlockW) / 2;
+    for (const id of svcIds) {
+      this._rects.push({ id, x: sx, y: btnY, w: BTN, h: BTN });
+      sx += BTN + GAP;
     }
 
-    // Separator gap
-    x += sepW;
-
-    // Service buttons
-    for (const id of svcIds) {
-      this._rects.push({ id, x, y: btnY, w: BTN, h: BTN });
-      x += BTN + GAP;
+    // Tool buttons (left block).
+    let tcx = barX + PAD;
+    for (const id of tools) {
+      this._rects.push({ id, x: tcx, y: btnY, w: TOOL_W, h: BTN });
+      tcx += TOOL_W + GAP;
     }
 
     return this._barRect;
@@ -244,14 +238,13 @@ export class BuildPalette {
 
     // Vertical separator between tools and service buttons
     const firstSvc = this._rects.find((r) => !r.id.startsWith("__"));
-    if (firstSvc) {
-      const sepX = firstSvc.x - 10;
+    if (firstSvc && this._sepX != null) {
       const btnY = firstSvc.y;
       ctx.strokeStyle = "rgba(255,255,255,0.1)";
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(sepX, btnY + 6);
-      ctx.lineTo(sepX, btnY + BTN - 6);
+      ctx.moveTo(this._sepX, btnY + 6);
+      ctx.lineTo(this._sepX, btnY + BTN - 6);
       ctx.stroke();
     }
 

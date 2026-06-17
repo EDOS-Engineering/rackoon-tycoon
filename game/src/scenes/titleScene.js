@@ -40,6 +40,9 @@ export class TitleScene extends Scene {
     this.confirmReset = false; // "New Game" confirmation modal open?
     this._confirmYes = { x: 0, y: 0, w: 0, h: 0 };
     this._confirmNo = { x: 0, y: 0, w: 0, h: 0 };
+    this.missionsOpen = false; // campaign mission dropdown open?
+    this._missionsBtn = { x: 0, y: 0, w: 0, h: 0 };
+    this._missionsPanel = { x: 0, y: 0, w: 0, h: 0 };
   }
 
   _in(r) {
@@ -105,20 +108,24 @@ export class TitleScene extends Scene {
       }
     }
 
-    // Hit-test the level-select chips (only unlocked are clickable).
-    if (input.leftDown) {
-      for (const lb of this._levelBtns) {
-        if (
-          lb.unlocked &&
-          input.x >= lb.x &&
-          input.x <= lb.x + lb.w &&
-          input.y >= lb.y &&
-          input.y <= lb.y + lb.h
-        ) {
-          this.game.scenes.go("level", { levelId: lb.id });
-          return;
+    // Campaign missions dropdown. The trigger button toggles it; while open it
+    // owns input (row launches a level, outside-click / Esc closes it).
+    if (input.leftDown && this._in(this._missionsBtn)) {
+      this.missionsOpen = !this.missionsOpen;
+      return;
+    }
+    if (this.missionsOpen) {
+      if (input.pressed("Escape")) { this.missionsOpen = false; return; }
+      if (input.leftDown) {
+        for (const lb of this._levelBtns) {
+          if (lb.unlocked && this._in(lb)) {
+            this.game.scenes.go("level", { levelId: lb.id });
+            return;
+          }
         }
+        if (!this._in(this._missionsPanel)) this.missionsOpen = false;
       }
+      return; // modal while open
     }
 
     // Hit-test Play / Continue button.
@@ -223,26 +230,110 @@ export class TitleScene extends Scene {
     ctx.fillText(playLabel, cx, by + bh / 2 + 1);
     ctx.textBaseline = "alphabetic";
 
-    // Difficulty selector (T3.8) then the compact level grid below it.
+    // Difficulty selector, then a single "Campaign" dropdown trigger (keeps the
+    // title uncluttered; the mission list expands to a readable width on click).
     this._renderDifficulty(ctx, cx, by + bh + 16, W);
-    const lvlBottom = this._renderLevelSelect(ctx, cx, by + bh + 80, W);
+    const mby = by + bh + 84;
+    this._renderMissionsButton(ctx, cx, mby, W);
+    this._renderSandboxBtn(ctx, cx, mby + 46, W);
 
-    // Reserved hover line: full name + subtitle of the focused mission (keeps the
-    // grid chips terse). When nothing is hovered, show a compact progress stat.
-    ctx.textAlign = "center";
-    ctx.font = FONT.uiSmall;
-    const hl = this._hoverLevelId ? getLevel(this._hoverLevelId) : null;
-    ctx.fillStyle = hl ? PALETTE.textDim : PALETTE.textFaint;
-    const label = hl
-      ? hl.name + (hl.subtitle ? "  —  " + hl.subtitle : "")
-      : LEVEL_ORDER.length + " missions  ·  " + this.totalStars + " ★ earned  ·  best routed " + this.best + "  ·  hover for details";
-    ctx.fillText(label, cx, lvlBottom + 18);
-
-    this._renderSandboxBtn(ctx, cx, lvlBottom + 30, W);
-
-    // New Game button (top-right) + its confirmation modal (drawn on top).
+    // New Game button (top-right). The missions dropdown + confirm modal draw on
+    // top of everything else.
     this._renderNewGameBtn(ctx, W, H);
+    if (this.missionsOpen) this._renderMissionsDropdown(ctx, cx, mby + 42, W, H);
     if (this.confirmReset) this._renderConfirm(ctx, W, H);
+  }
+
+  // Dropdown trigger: shows campaign progress; opens the mission list.
+  _renderMissionsButton(ctx, cx, y, W) {
+    const w = 360, h = 38, x = cx - w / 2;
+    this._missionsBtn = { x, y, w, h };
+    const over = this._in(this._missionsBtn) || this.missionsOpen;
+    ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+    roundRect(ctx, x, y, w, h, 9);
+    ctx.fill();
+    ctx.strokeStyle = this.missionsOpen ? PALETTE.accent : "rgba(255,179,71,0.3)";
+    ctx.lineWidth = this.missionsOpen ? 1.5 : 1;
+    roundRect(ctx, x, y, w, h, 9);
+    ctx.stroke();
+
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "left";
+    ctx.font = "700 13px system-ui, sans-serif";
+    ctx.fillStyle = PALETTE.text;
+    ctx.fillText("🎯  Campaign", x + 14, y + h / 2);
+    ctx.textAlign = "right";
+    ctx.font = FONT.uiSmall;
+    ctx.fillStyle = PALETTE.textDim;
+    ctx.fillText(
+      LEVEL_ORDER.length + " missions  ·  " + this.totalStars + " ★   " + (this.missionsOpen ? "▲" : "▼"),
+      x + w - 14, y + h / 2
+    );
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+  }
+
+  // The expanded mission list — two readable columns, full names + stars.
+  _renderMissionsDropdown(ctx, cx, y, W, H) {
+    const n = LEVEL_ORDER.length;
+    const cols = 2;
+    const rows = Math.ceil(n / cols);
+    const cellW = 274, cellH = 30, padX = 12, padY = 12, colGap = 10, rowGap = 4;
+    const w = padX * 2 + cols * cellW + (cols - 1) * colGap;
+    const h = padY * 2 + rows * cellH + (rows - 1) * rowGap;
+    const x = cx - w / 2;
+    this._missionsPanel = { x, y, w, h };
+    this._levelBtns = [];
+
+    ctx.fillStyle = "rgba(16,22,30,0.99)";
+    roundRect(ctx, x, y, w, h, 12);
+    ctx.fill();
+    ctx.strokeStyle = PALETTE.accent;
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, x, y, w, h, 12);
+    ctx.stroke();
+
+    for (let i = 0; i < n; i++) {
+      const col = Math.floor(i / rows);
+      const r = i % rows;
+      const cellX = x + padX + col * (cellW + colGap);
+      const cellY = y + padY + r * (cellH + rowGap);
+      const id = LEVEL_ORDER[i];
+      const lvl = getLevel(id);
+      const unlocked = isUnlocked(id, FIRST_LEVEL);
+      const best = bestFor(id);
+      this._levelBtns.push({ id, x: cellX, y: cellY, w: cellW, h: cellH, unlocked });
+      const over = unlocked && this._in({ x: cellX, y: cellY, w: cellW, h: cellH });
+
+      if (over) {
+        ctx.fillStyle = PALETTE.bgPanelHi;
+        roundRect(ctx, cellX, cellY, cellW, cellH, 6);
+        ctx.fill();
+      }
+      ctx.globalAlpha = unlocked ? 1 : 0.42;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      ctx.font = "700 10px system-ui, sans-serif";
+      ctx.fillStyle = PALETTE.textFaint;
+      ctx.fillText(String(i + 1).padStart(2, "0"), cellX + 9, cellY + cellH / 2);
+      ctx.font = "600 12px system-ui, sans-serif";
+      ctx.fillStyle = unlocked ? PALETTE.text : PALETTE.textFaint;
+      const nm = unlocked ? lvl.name : "🔒 " + lvl.name;
+      ctx.fillText(nm.length > 26 ? nm.slice(0, 25) + "…" : nm, cellX + 32, cellY + cellH / 2);
+
+      ctx.textAlign = "right";
+      ctx.font = "11px system-ui, sans-serif";
+      if (best && best.stars) {
+        ctx.fillStyle = PALETTE.accent;
+        ctx.fillText("★".repeat(best.stars) + "☆".repeat(3 - best.stars), cellX + cellW - 10, cellY + cellH / 2);
+      } else if (unlocked) {
+        ctx.fillStyle = PALETTE.textFaint;
+        ctx.fillText("☆☆☆", cellX + cellW - 10, cellY + cellH / 2);
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
   }
 
   // Small top-right button that opens the reset-progress confirmation.
@@ -369,75 +460,6 @@ export class TitleScene extends Scene {
       x += cw + gap;
     }
     ctx.textAlign = "center";
-  }
-
-  // Compact wrapped grid of level chips. Dense: each chip shows its number, a
-  // short name, and earned stars; the hovered chip's full name+subtitle is shown
-  // on a reserved label line by the caller. Returns the grid's bottom Y.
-  _renderLevelSelect(ctx, cx, y, W) {
-    this._levelBtns = [];
-    this._hoverLevelId = null;
-    const n = LEVEL_ORDER.length;
-    const cw = 100, ch = 40, gap = 6;
-    // Pick a column count that keeps the grid tight and on-screen.
-    const maxRowW = Math.min(W - 80, 920);
-    const cols = Math.max(4, Math.min(9, Math.floor((maxRowW + gap) / (cw + gap))));
-
-    ctx.textBaseline = "alphabetic";
-    for (let i = 0; i < n; i++) {
-      const id = LEVEL_ORDER[i];
-      const row = Math.floor(i / cols);
-      const col = i % cols;
-      const itemsInRow = Math.min(cols, n - row * cols);
-      const rowW = itemsInRow * cw + (itemsInRow - 1) * gap;
-      const x = cx - rowW / 2 + col * (cw + gap);
-      const cy = y + row * (ch + gap);
-
-      const lvl = getLevel(id);
-      const unlocked = isUnlocked(id, FIRST_LEVEL);
-      const best = bestFor(id);
-      this._levelBtns.push({ id, x, y: cy, w: cw, h: ch, unlocked });
-      const over = unlocked && this._in({ x, y: cy, w: cw, h: ch });
-      if (over) this._hoverLevelId = id;
-
-      ctx.globalAlpha = unlocked ? 1 : 0.4;
-      ctx.fillStyle = over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
-      roundRect(ctx, x, cy, cw, ch, 7);
-      ctx.fill();
-      ctx.strokeStyle = best && best.stars
-        ? PALETTE.accent
-        : unlocked ? (over ? "rgba(255,179,71,0.6)" : "rgba(255,179,71,0.28)") : "rgba(255,255,255,0.06)";
-      ctx.lineWidth = best && best.stars ? 1.5 : 1;
-      roundRect(ctx, x, cy, cw, ch, 7);
-      ctx.stroke();
-
-      // Number badge + short name on line 1.
-      ctx.textAlign = "left";
-      ctx.font = "700 9px system-ui, sans-serif";
-      ctx.fillStyle = PALETTE.textFaint;
-      ctx.fillText(String(i + 1).padStart(2, "0"), x + 8, cy + 16);
-      ctx.font = "700 11px system-ui, sans-serif";
-      ctx.fillStyle = unlocked ? PALETTE.text : PALETTE.textFaint;
-      const nm = unlocked ? lvl.name : "🔒 " + lvl.name;
-      ctx.fillText(nm.length > 13 ? nm.slice(0, 12) + "…" : nm, x + 24, cy + 16);
-
-      // Stars (or status) on line 2.
-      ctx.font = "10px system-ui, sans-serif";
-      if (best && best.stars) {
-        ctx.fillStyle = PALETTE.accent;
-        ctx.fillText("★".repeat(best.stars) + "☆".repeat(3 - best.stars), x + 8, cy + 31);
-      } else if (unlocked) {
-        ctx.fillStyle = PALETTE.textFaint;
-        ctx.fillText("☆☆☆", x + 8, cy + 31);
-      } else {
-        ctx.fillStyle = PALETTE.textFaint;
-        ctx.fillText("locked", x + 8, cy + 31);
-      }
-      ctx.globalAlpha = 1;
-    }
-    ctx.textAlign = "center";
-    const rows = Math.ceil(n / cols);
-    return y + rows * (ch + gap) - gap;
   }
 
   // Sandbox button — always unlocked, separate from the campaign chain.
