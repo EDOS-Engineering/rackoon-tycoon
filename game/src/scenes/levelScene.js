@@ -1280,23 +1280,24 @@ export class LevelScene extends Scene {
     ctx.textBaseline = "alphabetic";
   }
 
-  // Operational-realism telemetry chip (bottom-left): SLO compliance, peak blast
-  // radius, and current/worst RTO. Color flips amber/red as the numbers degrade.
+  // Operator telemetry panel (bottom-left): the live instrument readout an on-call
+  // engineer watches. Top row = T7.6 outcome numbers (SLO / blast / RTO); middle
+  // row = T7.5 operator signals (margin / headroom / SLO-burn); plus a demand
+  // sparkline so spikes are visible coming in. Colors flip amber/red as they degrade.
   _renderTelemetry(ctx, W, H) {
     const r = this.sim.realism;
+    const t = this.sim.telemetry();
     const slo = r.sloCompliance;
     const blast = r.peakBlastRadius;
-    const rtoNow = r.inOutage ? r._outageT : 0;
-    const rtoWorst = r.worstRtoSec;
 
     const pad = 10;
-    const w = 250;
-    const hh = 56;
+    const w = 280;
+    const hh = 120;
     const x = 14;
     const y = H - hh - 46; // clear the bottom-left "Study guide" corner link
 
     ctx.save();
-    ctx.fillStyle = "rgba(16,22,30,0.86)";
+    ctx.fillStyle = "rgba(16,22,30,0.9)";
     roundRect(ctx, x, y, w, hh, 10);
     ctx.fill();
     ctx.strokeStyle = "rgba(255,255,255,0.08)";
@@ -1310,34 +1311,81 @@ export class LevelScene extends Scene {
     ctx.fillStyle = PALETTE.textFaint;
     ctx.fillText("⚙  OPS TELEMETRY", x + pad, y + 13);
 
-    // SLO compliance.
-    const sloPct = Math.round(slo * 100);
-    const sloColor = slo >= 0.99 ? PALETTE.good : slo >= 0.95 ? PALETTE.warn : PALETTE.bad;
+    // ---- Row 1: outcome numbers (T7.6) ----
     ctx.font = "700 12px system-ui, sans-serif";
+    const sloColor = slo >= 0.99 ? PALETTE.good : slo >= 0.95 ? PALETTE.warn : PALETTE.bad;
     ctx.fillStyle = sloColor;
-    ctx.fillText("SLO " + sloPct + "%", x + pad, y + 34);
-
-    // Blast radius (peak).
+    ctx.fillText("SLO " + Math.round(slo * 100) + "%", x + pad, y + 32);
     const blastColor = blast < 0.34 ? PALETTE.good : blast < 0.67 ? PALETTE.warn : PALETTE.bad;
     ctx.fillStyle = blastColor;
-    ctx.fillText("blast " + Math.round(blast * 100) + "%", x + pad + 86, y + 34);
-
-    // RTO — show the live outage timer if down, else the worst recorded.
+    ctx.fillText("blast " + Math.round(blast * 100) + "%", x + pad + 92, y + 32);
     const down = r.inOutage;
-    ctx.fillStyle = down ? PALETTE.bad : rtoWorst > 0 ? PALETTE.warn : PALETTE.good;
-    const rtoTxt = down ? "RTO " + rtoNow.toFixed(0) + "s ▾" : "RTO " + rtoWorst.toFixed(0) + "s";
-    ctx.fillText(rtoTxt, x + pad + 170, y + 34);
+    ctx.fillStyle = down ? PALETTE.bad : r.worstRtoSec > 0 ? PALETTE.warn : PALETTE.good;
+    ctx.fillText(
+      down ? "RTO " + r._outageT.toFixed(0) + "s ▾" : "RTO " + r.worstRtoSec.toFixed(0) + "s",
+      x + pad + 188, y + 32
+    );
 
-    // Footnote: RPO (data lost) if any.
+    // ---- Row 2: operator signals (T7.5) ----
+    ctx.font = "700 12px system-ui, sans-serif";
+    // Margin ($/s).
+    const m = t.marginPerSec;
+    ctx.fillStyle = m >= 0 ? PALETTE.good : PALETTE.bad;
+    const mTxt = (m >= 0 ? "▲ +$" : "▼ -$") + Math.abs(m).toFixed(1) + "/s";
+    ctx.fillText(mTxt, x + pad, y + 52);
+    // Headroom.
+    const hr = t.headroom;
+    ctx.fillStyle = hr > 0.3 ? PALETTE.good : hr > 0.1 ? PALETTE.warn : PALETTE.bad;
+    ctx.fillText("hdrm " + Math.round(hr * 100) + "%", x + pad + 92, y + 52);
+    // SLO error-budget burn (× the allowed rate).
+    const burn = t.sloBurn;
+    ctx.fillStyle = burn > 1 ? PALETTE.bad : burn > 0.5 ? PALETTE.warn : PALETTE.good;
+    ctx.fillText("burn " + burn.toFixed(1) + "×", x + pad + 188, y + 52);
+
+    // ---- Demand sparkline (T7.5) ----
+    const spX = x + pad;
+    const spY = y + 66;
+    const spW = w - pad * 2;
+    const spH = 30;
+    ctx.font = "9px system-ui, sans-serif";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.fillText("demand", spX, spY + 5);
+    ctx.fillStyle = PALETTE.accent;
+    ctx.fillText("×" + t.demandNow.toFixed(2), spX + spW - 26, spY + 5);
+    this._sparkline(ctx, t.demandHist, spX, spY + 10, spW, spH - 10, PALETTE.accent);
+
+    // RPO footnote.
     ctx.font = "10px system-ui, sans-serif";
     ctx.fillStyle = r.dataLost > 0 ? PALETTE.bad : PALETTE.textFaint;
+    ctx.textBaseline = "alphabetic";
     ctx.fillText(
       r.dataLost > 0 ? "⚠ " + r.dataLost + " requests lost in outage (RPO)" : "no data lost",
-      x + pad, y + 48
+      spX, y + hh - 7
     );
     ctx.restore();
     ctx.textAlign = "left";
     ctx.textBaseline = "alphabetic";
+  }
+
+  // Tiny line graph of a value history, auto-scaled to the buffer's min/max.
+  _sparkline(ctx, hist, x, y, w, h, color) {
+    if (!hist || hist.length < 2) return;
+    let lo = Infinity, hi = -Infinity;
+    for (const v of hist) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    const span = hi - lo || 1;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let i = 0; i < hist.length; i++) {
+      const px = x + (w * i) / (hist.length - 1);
+      const py = y + h - ((hist[i] - lo) / span) * h;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Sandbox revenue-reinvestment slider. Horizontal track in the top-right area.
