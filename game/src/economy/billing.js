@@ -17,11 +17,15 @@
 // nothing. Transfer is a small per-hop egress nibble, not a budget-killer.
 export const BILL = {
   rateDivisor: 130, // cost -> $/sec running burn (higher = gentler)
-  transferPerHop: 0.015, // $ per packet per wire hop crossed
-  crossAzSurcharge: 1.0, // extra transfer multiplier when a hop crosses an AZ
-  //                        boundary (real AWS inter-AZ ~$0.01/GB each way;
-  //                        intra-AZ free). Modest so resilient multi-AZ designs
-  //                        stay affordable — distribution should not bankrupt you.
+  transferPerHop: 0.015, // base $ per packet per wire hop (scaled by the muls below)
+  // Transfer model mirrors real AWS data-transfer billing:
+  //   - Intra-AZ traffic between resources is FREE → a plain tile contributes 0.
+  //   - Crossing an AZ boundary costs the full penalty below (real inter-AZ is a
+  //     hard, deliberate cost; multi-AZ HA trades budget for resilience). This is
+  //     an exam lesson, not a softened one — keep chatty tiers in a single AZ.
+  //   - A tile's own transferCostMul (NAT ×8, VPCE ×0.02, CloudFront ×0.2) is the
+  //     service's data-processing/egress charge and stacks on top, AZ or not.
+  crossAzPenalty: 8.0, // per-hop transfer multiplier added when a hop crosses an AZ
   auditMultiplier: 1.0, // mutated by the "cost audit" event
 };
 

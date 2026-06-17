@@ -32,9 +32,9 @@ export const CONN = {
     transferMul: 1,
     crossAzExempt: false,
     blurb:
-      "Default same-VPC link. Cheapest path. Intra-AZ traffic is free; crossing an AZ band adds the standard inter-AZ transfer cost.",
+      "Default same-VPC link. Intra-AZ traffic is free; crossing an AZ band costs 8× per hop. Keep chatty tiers in one AZ; pay for cross-AZ only where you need resilience.",
     examTip:
-      "Traffic within a single AZ in one VPC is free. Cross-AZ traffic between your resources is ~$0.01/GB each way — keep chatty tiers in one AZ when you can.",
+      "Traffic within a single AZ in one VPC is free. Cross-AZ traffic between your resources is billed each way — multi-AZ HA is a real cost/resilience tradeoff, a favourite SAA exam theme.",
   },
   peering: {
     id: "peering",

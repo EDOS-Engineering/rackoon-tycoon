@@ -695,25 +695,24 @@ export class LevelScene extends Scene {
         const [c, r] = Grid.parseKey(key);
         const b = this.grid.getBuilding(c, r);
         if (b) b.activity = 1; // pulse the building the packet enters
-        // ---- T2.1: data-transfer cost — each wire hop the packet crosses bills
-        // a small egress charge. transferCostMul on NAT Gateway (×8) or VPC
-        // Endpoint (×0.02) reflects real AWS per-hop egress pricing. A hop that
-        // crosses an AZ boundary adds a cross-AZ surcharge (real AWS inter-AZ
-        // data transfer is ~$0.01/GB each way; intra-AZ is free). ----
-        let xferMul = (b && b.service.transferCostMul != null) ? b.service.transferCostMul : 1;
+        // ---- T2.1: data-transfer cost, modelled on real AWS billing ----
+        //   - Intra-AZ traffic is FREE: a plain tile contributes 0 to the hop.
+        //   - A tile's transferCostMul is its own processing/egress charge and
+        //     applies regardless of AZ (NAT ×8, VPC Endpoint ×0.02, CloudFront ×0.2).
+        //   - Crossing an AZ boundary adds the full cross-AZ penalty (×8). Gate
+        //     (Route 53) is the internet edge — hops touching it carry no AZ charge.
+        let xferMul = (b && b.service.transferCostMul != null) ? b.service.transferCostMul : 0;
         const idx = Math.floor(p.t);
         const prevKey = idx > 0 ? p.path[idx - 1] : null;
         if (prevKey) {
           const [pc, pr] = Grid.parseKey(prevKey);
           const prevB = this.grid.getBuilding(pc, pr);
-          // Route 53 is global (the internet edge) — hops touching the gate carry
-          // no inter-AZ charge. Otherwise a zone change bills the surcharge.
           const touchesGate =
             (b && b.service.role === ROLE.GATE) ||
             (prevB && prevB.service.role === ROLE.GATE);
           if (!touchesGate &&
               zoneOfColumn(pc, this.grid.cols) !== zoneOfColumn(c, this.grid.cols)) {
-            xferMul += BILL.crossAzSurcharge;
+            xferMul += BILL.crossAzPenalty;
           }
         }
         this.bill.chargeTransfer(xferMul);
@@ -1251,7 +1250,7 @@ export class LevelScene extends Scene {
     const rows = [
       ["🎯", "Goal", "Route the target number of guests: gate → compute → database → back."],
       ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag from one service to another to wire — any distance, no adjacency needed; right-click a wire to cut."],
-      ["💰", "AWS bill", "Buildings and data transfer burn your budget (top-left). Same-AZ links are cheap; a wire crossing an AZ band adds a small inter-AZ transfer cost. Don't let the budget hit $0."],
+      ["💰", "AWS bill", "Buildings and data transfer burn your budget (top-left). Intra-AZ traffic is FREE; a wire crossing an AZ band (amber) costs 8× per hop. Multi-AZ resilience is real money — keep chatty tiers in one AZ. Don't let the budget hit $0."],
       ["📈", "Waves", "Traffic ramps up in phases (top-right). Add capacity before the peaks arrive."],
       ["🔥", "Overload", "A building past its throughput queues up — latency climbs, then it drops guests. Watch the hot tiles."],
       ["🗺️", "Zones", "The board spans AZ bands (us-rk-1a/b/c). A zone can fail and disable its tiles — spread compute & DBs across zones. Route 53 is a global service: it's immune to AZ failures and can wire directly to endpoints in any zone."],

@@ -236,7 +236,8 @@ const economyAudit = await page.evaluate(async () => {
     replicaCost: S.rds_replica.cost,                 // a full standard instance
     rdsCost: S.rds.cost,
     multiAzRatio: S.rds_multiaz.cost / S.rds.cost,   // ~2× (synchronous standby)
-    crossAzSurcharge: bill.BILL.crossAzSurcharge,
+    crossAzPenalty: bill.BILL.crossAzPenalty,        // full 8× on cross-AZ hops
+    plainTileNoXfer: S.ec2.transferCostMul == null && S.alb.transferCostMul == null, // intra-AZ free
   };
 });
 
@@ -420,7 +421,8 @@ if (economyAudit.vpceCost > 40)     problems.push("VPC Endpoint should be cheap 
 if (economyAudit.shieldCost < 280)  problems.push("Shield Advanced should be premium-priced");
 if (economyAudit.replicaCost < 120) problems.push("Read Replica should cost ~a full standard instance");
 if (economyAudit.multiAzRatio < 1.6) problems.push("RDS Multi-AZ should cost ~2× single-AZ RDS");
-if (economyAudit.crossAzSurcharge <= 0) problems.push("cross-AZ transfer surcharge should be > 0");
+if (economyAudit.crossAzPenalty < 8) problems.push("cross-AZ transfer penalty should be the full 8×");
+if (!economyAudit.plainTileNoXfer)  problems.push("plain tiles should carry no transfer mul (intra-AZ must be free)");
 
 console.log("phase4:", JSON.stringify(phase4));
 
