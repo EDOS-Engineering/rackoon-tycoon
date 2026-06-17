@@ -18,6 +18,10 @@
 export const BILL = {
   rateDivisor: 130, // cost -> $/sec running burn (higher = gentler)
   transferPerHop: 0.015, // $ per packet per wire hop crossed
+  crossAzSurcharge: 1.0, // extra transfer multiplier when a hop crosses an AZ
+  //                        boundary (real AWS inter-AZ ~$0.01/GB each way;
+  //                        intra-AZ free). Modest so resilient multi-AZ designs
+  //                        stay affordable — distribution should not bankrupt you.
   auditMultiplier: 1.0, // mutated by the "cost audit" event
 };
 

@@ -3,7 +3,7 @@
 //   - Own the Grid model + camera control (pan/zoom).
 //   - Tile picking + hover highlight.
 //   - Build/erase buildings (budget-gated) via the palette.
-//   - Wire dragging between adjacent compatible tiles.
+//   - Wire dragging between compatible services at any grid distance.
 //   - Spawn request packets at the gate, route them via BFS to a sink and back.
 //   - Track success/fail + revenue/lost; draw HUD, palette, tooltips.
 //
@@ -14,7 +14,7 @@ import { Scene } from "../engine/scene.js";
 import { PALETTE, FONT } from "../theme.js";
 import { Grid, TILE } from "../grid/grid.js";
 import { getLevel } from "../levels/levels.js";
-import { SERVICES, getService, canConnect } from "../services/catalog.js";
+import { SERVICES, getService, canWire } from "../services/catalog.js";
 import { findRoundTrip, gateHasRoute } from "../grid/pathfind.js";
 import { Packet } from "../entities/packet.js";
 import { BuildPalette } from "../ui/palette.js";
@@ -275,6 +275,9 @@ export class LevelScene extends Scene {
     // indicator + build ghost stay live while you set up). Disabled tiles (AZ
     // failure) are excluded, so an outage invalidates a single-zone route. ----
     if (this._routeDirty) {
+      // Reconcile structural-dependency flags first so the topology indicator and
+      // the dependency banner are correct even during the briefing (pre-start).
+      for (const b of this.grid.buildings.values()) b.invalid = !this._dependencyMet(b);
       const blocked = (key) => this._isKeyDisabled(key);
       this.routeOk = this.gateKeys.some((gk) =>
         gateHasRoute(this.grid, gk, blocked)
@@ -356,6 +359,13 @@ export class LevelScene extends Scene {
         b.disabled = off;
         changed = true;
       }
+      // Structural dependency (e.g. a Read Replica needs a source primary on the
+      // board). Recomputed each tick because placing/removing tiles changes it.
+      const invalid = !this._dependencyMet(b);
+      if (invalid !== b.invalid) {
+        b.invalid = invalid;
+        changed = true;
+      }
     }
     if (changed) {
       this._routeDirty = true;
@@ -388,13 +398,29 @@ export class LevelScene extends Scene {
     if (this.budget < 0) this.budget = 0;
   }
 
-  // True if the tile at this "c,r" key is currently disabled (offline).
-  // Gate (Route 53) and azResilient services are immune to AZ failures.
+  // True if the tile at this "c,r" key cannot currently carry traffic — either
+  // offline (its AZ failed) or structurally invalid (an unmet dependency, e.g. a
+  // Read Replica with no source primary). Gate (Route 53) and azResilient
+  // services are immune to AZ failures, but still subject to dependency rules.
   _isKeyDisabled(key) {
     const [c, r] = Grid.parseKey(key);
     const b = this.grid.getBuilding(c, r);
+    if (b && !this._dependencyMet(b)) return true;
     if (b && (b.service.role === ROLE.GATE || b.service.azResilient)) return false;
     return this.events.isTileDisabled(c, r);
+  }
+
+  // True if a building's structural dependency (catalog `dependsOn`) is satisfied
+  // by another building present on the board. No dependency → always true.
+  // Models real AWS topology: e.g. an RDS Read Replica must have a source primary.
+  _dependencyMet(b) {
+    const dep = b.service.dependsOn;
+    if (!dep || !dep.anyOf || dep.anyOf.length === 0) return true;
+    for (const other of this.grid.buildings.values()) {
+      if (other === b) continue;
+      if (dep.anyOf.includes(other.service.id)) return true;
+    }
+    return false;
   }
 
   // Decide win/lose and arm the brief end-of-round pause.
@@ -577,8 +603,8 @@ export class LevelScene extends Scene {
       return;
     }
 
-    // WIRE mode: press on a building tile to start a wire, release on an
-    // adjacent compatible building tile to commit it.
+    // WIRE mode: press on a building tile to start a wire, release on any
+    // compatible building tile to commit it (any distance).
     if (this.palette.wireMode) {
       if (input.leftDown && t && this.grid.hasBuilding(t.col, t.row)) {
         this.wireFrom = { col: t.col, row: t.row };
@@ -602,8 +628,10 @@ export class LevelScene extends Scene {
   }
 
   // Commit a wire from this.wireFrom to the tile under the cursor, if legal.
-  // Route 53 (gate) is a global service and can register endpoints in any AZ —
-  // adjacency is not required when one end is the gate.
+  // Wires span any distance on the grid (no adjacency rule) — a real VPC links
+  // services across subnets/AZs, not just neighbouring racks. Legality is purely
+  // service-appropriateness (canWire). Cross-AZ wires bill a small data-transfer
+  // surcharge per packet (see _updatePackets), mirroring AWS inter-AZ pricing.
   _commitWire(toTile) {
     const from = this.wireFrom;
     if (!from || !toTile) return;
@@ -612,10 +640,7 @@ export class LevelScene extends Scene {
     const a = this.grid.getBuilding(from.col, from.row);
     const b = this.grid.getBuilding(toTile.col, toTile.row);
     if (!a || !b) return;
-    if (!canConnect(a.service.role, b.service.role)) return;
-
-    const gateConn = a.service.role === ROLE.GATE || b.service.role === ROLE.GATE;
-    if (!gateConn && !Grid.areAdjacent(from.col, from.row, toTile.col, toTile.row)) return;
+    if (!canWire(a.service, b.service)) return;
 
     const aKey = Grid.key(from.col, from.row);
     const bKey = Grid.key(toTile.col, toTile.row);
@@ -672,8 +697,25 @@ export class LevelScene extends Scene {
         if (b) b.activity = 1; // pulse the building the packet enters
         // ---- T2.1: data-transfer cost — each wire hop the packet crosses bills
         // a small egress charge. transferCostMul on NAT Gateway (×8) or VPC
-        // Endpoint (×0.02) reflects real AWS per-hop egress pricing. ----
-        const xferMul = (b && b.service.transferCostMul != null) ? b.service.transferCostMul : 1;
+        // Endpoint (×0.02) reflects real AWS per-hop egress pricing. A hop that
+        // crosses an AZ boundary adds a cross-AZ surcharge (real AWS inter-AZ
+        // data transfer is ~$0.01/GB each way; intra-AZ is free). ----
+        let xferMul = (b && b.service.transferCostMul != null) ? b.service.transferCostMul : 1;
+        const idx = Math.floor(p.t);
+        const prevKey = idx > 0 ? p.path[idx - 1] : null;
+        if (prevKey) {
+          const [pc, pr] = Grid.parseKey(prevKey);
+          const prevB = this.grid.getBuilding(pc, pr);
+          // Route 53 is global (the internet edge) — hops touching the gate carry
+          // no inter-AZ charge. Otherwise a zone change bills the surcharge.
+          const touchesGate =
+            (b && b.service.role === ROLE.GATE) ||
+            (prevB && prevB.service.role === ROLE.GATE);
+          if (!touchesGate &&
+              zoneOfColumn(pc, this.grid.cols) !== zoneOfColumn(c, this.grid.cols)) {
+            xferMul += BILL.crossAzSurcharge;
+          }
+        }
         this.bill.chargeTransfer(xferMul);
         this.budget -= BILL.transferPerHop * xferMul * this.bill.auditMul;
         if (this.budget < 0) this.budget = 0;
@@ -858,17 +900,8 @@ export class LevelScene extends Scene {
       if (this.hoverTile) {
         const a = this.grid.getBuilding(this.wireFrom.col, this.wireFrom.row);
         const b = this.grid.getBuilding(this.hoverTile.col, this.hoverTile.row);
-        const gateConn = (a && a.service.role === ROLE.GATE) || (b && b.service.role === ROLE.GATE);
-        valid =
-          a &&
-          b &&
-          (gateConn || Grid.areAdjacent(
-            this.wireFrom.col,
-            this.wireFrom.row,
-            this.hoverTile.col,
-            this.hoverTile.row
-          )) &&
-          canConnect(a.service.role, b.service.role);
+        // Wires span any distance — validity is purely service-appropriateness.
+        valid = a && b && canWire(a.service, b.service);
       }
       drawPendingWire(
         ctx,
@@ -948,8 +981,15 @@ export class LevelScene extends Scene {
     this._renderObjective(ctx, W);
 
     // Win requirement hint: shown when goal count is met but build doesn't satisfy
-    // the level's service constraints.
-    if (this._reqHint) this._renderReqHint(ctx, W);
+    // the level's service constraints. Otherwise, if a placed building has an
+    // unmet structural dependency (e.g. a Read Replica with no source primary),
+    // warn about that — it's why the route may not be forming.
+    if (this._reqHint) {
+      this._renderReqHint(ctx, W);
+    } else {
+      const inv = this._firstInvalidBuilding();
+      if (inv) this._renderDepHint(ctx, W, inv);
+    }
 
     // Sandbox reinvestment slider (only in sandbox mode, once shift started).
     if (!this.level.goalRequests && this.started) this._renderSandboxSlider(ctx, W);
@@ -1010,7 +1050,10 @@ export class LevelScene extends Scene {
     let live = null;
     let liveColor = PALETTE.textDim;
     if (svc.role !== "gate") {
-      if (b.disabled) {
+      if (b.invalid) {
+        live = "INVALID — missing required dependency (see banner)";
+        liveColor = PALETTE.warn;
+      } else if (b.disabled) {
         live = "OFFLINE — this AZ is down";
         liveColor = PALETTE.bad;
       } else {
@@ -1207,8 +1250,8 @@ export class LevelScene extends Scene {
     const w = 580;
     const rows = [
       ["🎯", "Goal", "Route the target number of guests: gate → compute → database → back."],
-      ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag between neighbours to wire; right-click a wire to cut."],
-      ["💰", "AWS bill", "Buildings and data transfer burn your budget over time (top-left). Don't let it hit $0."],
+      ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag from one service to another to wire — any distance, no adjacency needed; right-click a wire to cut."],
+      ["💰", "AWS bill", "Buildings and data transfer burn your budget (top-left). Same-AZ links are cheap; a wire crossing an AZ band adds a small inter-AZ transfer cost. Don't let the budget hit $0."],
       ["📈", "Waves", "Traffic ramps up in phases (top-right). Add capacity before the peaks arrive."],
       ["🔥", "Overload", "A building past its throughput queues up — latency climbs, then it drops guests. Watch the hot tiles."],
       ["🗺️", "Zones", "The board spans AZ bands (us-rk-1a/b/c). A zone can fail and disable its tiles — spread compute & DBs across zones. Route 53 is a global service: it's immune to AZ failures and can wire directly to endpoints in any zone."],
@@ -1324,6 +1367,52 @@ export class LevelScene extends Scene {
     ctx.fillStyle = PALETTE.warn;
     ctx.font = "700 11px system-ui, sans-serif";
     ctx.fillText("⚠ GOAL MET — BUT WIN BLOCKED:", W / 2, y + 5);
+    ctx.font = FONT.uiSmall;
+    ctx.fillStyle = PALETTE.text;
+    let ty = y + 17;
+    for (const ln of lines) {
+      ctx.fillText(ln, W / 2, ty);
+      ty += lineH;
+    }
+    ctx.restore();
+  }
+
+  // First placed building with an unmet structural dependency, or null.
+  _firstInvalidBuilding() {
+    for (const b of this.grid.buildings.values()) {
+      if (b.invalid) return b;
+    }
+    return null;
+  }
+
+  // Dependency warning chip: a placed tile can't function until its required
+  // source service exists on the board (e.g. Read Replica needs a primary).
+  _renderDepHint(ctx, W, b) {
+    const svc = b.service;
+    const msg = (svc.dependsOn && svc.dependsOn.hint) || (svc.label + " is missing a required dependency.");
+    const lines = wrapText(msg, 70);
+    ctx.save();
+    ctx.font = FONT.uiSmall;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+
+    const lineH = 14;
+    const w = Math.min(W - 40, 520);
+    const h = 18 + lines.length * lineH;
+    const x = W / 2 - w / 2;
+    const y = 44;
+
+    ctx.fillStyle = "rgba(255,179,71,0.12)";
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.fill();
+    ctx.strokeStyle = PALETTE.warn;
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, x, y, w, h, 8);
+    ctx.stroke();
+
+    ctx.fillStyle = PALETTE.warn;
+    ctx.font = "700 11px system-ui, sans-serif";
+    ctx.fillText("⚠ " + svc.label.toUpperCase() + " INACTIVE:", W / 2, y + 5);
     ctx.font = FONT.uiSmall;
     ctx.fillStyle = PALETTE.text;
     let ty = y + 17;

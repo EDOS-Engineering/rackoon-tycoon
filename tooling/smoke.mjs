@@ -209,6 +209,37 @@ const winReq = await page.evaluate(async () => {
   };
 });
 
+// AWS fidelity: VPC Endpoint only fronts S3/DynamoDB; Read Replica declares a
+// source-primary dependency.
+const awsFidelity = await page.evaluate(async () => {
+  const cat = await import("./src/services/catalog.js");
+  const S = cat.SERVICES;
+  return {
+    hasCanWire: typeof cat.canWire === "function",
+    vpceToS3:   cat.canWire(S.vpc_endpoint, S.s3),        // allowed
+    vpceToDdb:  cat.canWire(S.vpc_endpoint, S.dynamodb),  // allowed
+    vpceToRds:  cat.canWire(S.vpc_endpoint, S.rds),       // blocked
+    replicaDependsOnPrimary:
+      (S.rds_replica.dependsOn?.anyOf || []).includes("rds") &&
+      (S.rds_replica.dependsOn?.anyOf || []).includes("rds_multiaz"),
+  };
+});
+
+// Economy realism audit: cost relationships + cross-AZ transfer surcharge.
+const economyAudit = await page.evaluate(async () => {
+  const cat = await import("./src/services/catalog.js");
+  const bill = await import("./src/economy/billing.js");
+  const S = cat.SERVICES;
+  return {
+    vpceCost: S.vpc_endpoint.cost,                   // gateway endpoint = cheap (no hourly)
+    shieldCost: S.shield.cost,                       // Shield Advanced = premium
+    replicaCost: S.rds_replica.cost,                 // a full standard instance
+    rdsCost: S.rds.cost,
+    multiAzRatio: S.rds_multiaz.cost / S.rds.cost,   // ~2× (synchronous standby)
+    crossAzSurcharge: bill.BILL.crossAzSurcharge,
+  };
+});
+
 // Sandbox reinvestment: goalRequests=0 level exists; _reinvestRate property present on scene.
 const sandboxFix = await page.evaluate(() => {
   const s = window.__rackoon.scenes.current;
@@ -248,6 +279,60 @@ const phase4 = await page.evaluate(async () => {
   };
 });
 
+// Dependency routing: a Read Replica with no source primary is structurally
+// invalid — it carries no traffic and is not a valid routing sink. Adding a
+// primary anywhere on the board activates it. Run in the clean sandbox board.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "sandbox" }));
+await page.waitForTimeout(300);
+const depRouting = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const cat = await import("./src/services/catalog.js");
+  const pf = await import("./src/grid/pathfind.js");
+  const S = cat.SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  // gate -> EC2 -> Read Replica, no primary on the board.
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.place(S.rds_replica, gc + 2, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr));
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr));
+  const blocked = (key) => s._isKeyDisabled(key);
+  const replica = s.grid.getBuilding(gc + 2, gr);
+  const invalidNoPrimary = !s._dependencyMet(replica);
+  const routeNoPrimary = pf.gateHasRoute(s.grid, K(gc, gr), blocked);
+  // Place a primary RDS anywhere — the replica activates.
+  s.grid.place(S.rds, gc + 1, gr + 1);
+  const invalidWithPrimary = !s._dependencyMet(replica);
+  const routeWithPrimary = pf.gateHasRoute(s.grid, K(gc, gr), blocked);
+  return { invalidNoPrimary, routeNoPrimary, invalidWithPrimary, routeWithPrimary };
+});
+
+// Any-distance wiring: _commitWire must accept a far, non-adjacent compatible
+// pair, and still reject inappropriate pairs (sink<->sink, VPCE->RDS) at any
+// distance. Driven directly via the scene's wire commit (still the sandbox).
+const wireRules = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const cat = await import("./src/services/catalog.js");
+  const S = cat.SERVICES;
+  // Far, compatible: EC2 (compute) -> RDS (sink), 8+ tiles apart, non-adjacent.
+  s.grid.place(S.ec2, 12, 1);
+  s.grid.place(S.rds, 18, 10);
+  s.wireFrom = { col: 12, row: 1 };
+  s._commitWire({ col: 18, row: 10 });
+  const farCompatibleWired = s.grid.hasEdge("12,1", "18,10");
+  // Far, inappropriate: RDS (sink) <-> DynamoDB (sink) must be rejected.
+  s.grid.place(S.dynamodb, 14, 5);
+  s.wireFrom = { col: 18, row: 10 };
+  s._commitWire({ col: 14, row: 5 });
+  const sinkToSinkBlocked = !s.grid.hasEdge("18,10", "14,5");
+  // Far, inappropriate: VPC Endpoint -> RDS must be rejected (S3/DynamoDB only).
+  s.grid.place(S.vpc_endpoint, 16, 2);
+  s.wireFrom = { col: 16, row: 2 };
+  s._commitWire({ col: 18, row: 10 });
+  const vpceToRdsBlocked = !s.grid.hasEdge("16,2", "18,10");
+  return { farCompatibleWired, sinkToSinkBlocked, vpceToRdsBlocked };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -261,6 +346,10 @@ console.log("levels3c:", JSON.stringify(levels3c));
 console.log("r53 global:", JSON.stringify(r53));
 console.log("azFix:", JSON.stringify(azFix));
 console.log("winReq:", JSON.stringify(winReq));
+console.log("awsFidelity:", JSON.stringify(awsFidelity));
+console.log("economyAudit:", JSON.stringify(economyAudit));
+console.log("depRouting:", JSON.stringify(depRouting));
+console.log("wireRules:", JSON.stringify(wireRules));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -312,6 +401,26 @@ if (!winReq.replayStreams)          problems.push("replay_or_gone winRequires.pa
 if (!winReq.writerHasReq)           problems.push("single_writer missing winRequires");
 if (!winReq.writerSinkIs)           problems.push("single_writer winRequires.sinkIs should include aurora_sv2 or aurora_limitless");
 if (!sandboxFix.hasReinvestRate)    problems.push("LevelScene missing _reinvestRate for sandbox slider");
+// AWS-fidelity assertions.
+if (!awsFidelity.hasCanWire)        problems.push("catalog.canWire export missing");
+if (!awsFidelity.vpceToS3)          problems.push("VPC Endpoint should be allowed to front S3");
+if (!awsFidelity.vpceToDdb)         problems.push("VPC Endpoint should be allowed to front DynamoDB");
+if (awsFidelity.vpceToRds)          problems.push("VPC Endpoint must NOT front RDS (Gateway endpoints serve S3/DynamoDB only)");
+if (!awsFidelity.replicaDependsOnPrimary) problems.push("rds_replica.dependsOn should list rds + rds_multiaz");
+if (!depRouting.invalidNoPrimary)   problems.push("Read Replica with no primary should be structurally invalid");
+if (depRouting.routeNoPrimary)      problems.push("route should NOT form through a primary-less Read Replica");
+if (depRouting.invalidWithPrimary)  problems.push("Read Replica should be valid once a primary is on the board");
+if (!depRouting.routeWithPrimary)   problems.push("route should form through a Read Replica once a primary exists");
+// Any-distance wiring + appropriateness.
+if (!wireRules.farCompatibleWired)  problems.push("non-adjacent compatible wire (EC2->RDS) should be allowed");
+if (!wireRules.sinkToSinkBlocked)   problems.push("sink<->sink wire should be rejected at any distance");
+if (!wireRules.vpceToRdsBlocked)    problems.push("VPC Endpoint -> RDS wire should be rejected at any distance");
+// Economy realism.
+if (economyAudit.vpceCost > 40)     problems.push("VPC Endpoint should be cheap (gateway endpoint has no hourly fee)");
+if (economyAudit.shieldCost < 280)  problems.push("Shield Advanced should be premium-priced");
+if (economyAudit.replicaCost < 120) problems.push("Read Replica should cost ~a full standard instance");
+if (economyAudit.multiAzRatio < 1.6) problems.push("RDS Multi-AZ should cost ~2× single-AZ RDS");
+if (economyAudit.crossAzSurcharge <= 0) problems.push("cross-AZ transfer surcharge should be > 0");
 
 console.log("phase4:", JSON.stringify(phase4));
 

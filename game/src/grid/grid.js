@@ -30,6 +30,7 @@ export class Building {
     this.latencyMs = service.latency; // live latency (rises with the queue)
     this.dropping = false; // shedding requests this tick?
     this.disabled = false; // offline (e.g. its AZ failed)
+    this.invalid = false; // structural dependency unmet (e.g. replica with no primary)
   }
 }
 

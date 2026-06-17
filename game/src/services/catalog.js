@@ -13,6 +13,16 @@
 //   autoScale        — if true, effective throughput scales with demand up to 2×
 //                      (Aurora Serverless v2; default = false)
 //   replayable       — narrative flag for Kinesis Streams (tooltip/teach only)
+//   dependsOn        — structural dependency on another service that must be
+//                      present on the board for this tile to function. Shape:
+//                      { anyOf: [serviceId...], hint } — models real AWS topology
+//                      (e.g. an RDS Read Replica replicates from a source primary
+//                      and cannot exist standalone). A tile whose dependency is
+//                      unmet is flagged invalid: it carries no traffic and can't
+//                      be a routing sink until the dependency is satisfied.
+//   validSinks       — for a fronting service that only fronts specific backends
+//                      (Gateway VPC Endpoint serves S3 + DynamoDB only). Restricts
+//                      which sink ids it may be wired to.
 //
 // ROLES drive the request path. A valid round-trip is:
 //   GATE  ->  (any wired compute/edge tiles)  ->  SINK  ->  back to GATE
@@ -47,7 +57,7 @@ export const SERVICES = {
     latency: 1,
     placeable: false,
     blurb:
-      "Route 53 — global DNS front gate. Immune to AZ failures. Wire directly to endpoints in any Availability Zone — drag a wire from here to any ALB or compute tile across the grid.",
+      "Route 53 — global DNS front gate. Immune to AZ failures, and traffic from the gate carries no inter-AZ charge (it's the internet edge). Wire it to any ALB or compute tile across the grid.",
     examTip:
       "Route 53 + health checks = multi-region active-active or active-passive failover. Combine latency-based routing with health checks for automatic region failover.",
   },
@@ -113,13 +123,14 @@ export const SERVICES = {
     emoji: "🔗",
     role: ROLE.EDGE,
     color: "#4cc9f0",
-    cost: 40,
+    cost: 25,
     throughput: 80,
     latency: 1,
     transferCostMul: 0.02,
+    validSinks: ["s3", "dynamodb"],
     placeable: true,
     blurb:
-      "VPC Endpoint (Gateway) — private path to S3/DynamoDB inside AWS. Near-zero data-transfer cost. Replaces NAT Gateway for AWS-internal traffic and plugs the money leak.",
+      "VPC Endpoint (Gateway) — private path to S3/DynamoDB inside AWS. Near-zero data-transfer cost. Only fronts S3 or DynamoDB (the two Gateway-endpoint services). Replaces NAT Gateway for AWS-internal traffic and plugs the money leak.",
     examTip:
       "Gateway endpoints (S3, DynamoDB) are free — no per-hour or per-GB charge. Interface endpoints (PrivateLink) cost per-hour + per-GB. On SAA-C03: Gateway endpoint always wins over NAT for those two services.",
   },
@@ -167,7 +178,7 @@ export const SERVICES = {
     emoji: "🔰",
     role: ROLE.EDGE,
     color: "#2d6a4f",
-    cost: 200,
+    cost: 300,
     throughput: 999,
     latency: 0,
     attackMitigation: 0.75,
@@ -309,12 +320,16 @@ export const SERVICES = {
     emoji: "📖",
     role: ROLE.SINK,
     color: "#457b9d",
-    cost: 80,
+    cost: 130,
     throughput: 20,
     latency: 9,
+    dependsOn: {
+      anyOf: ["rds", "rds_multiaz"],
+      hint: "Read Replica needs a source RDS primary on the board — it replicates from a primary and cannot stand alone. Place an RDS or RDS Multi-AZ first.",
+    },
     placeable: true,
     blurb:
-      "RDS Read Replica — asynchronous read-only copy (can be in a different AZ). Offloads reads cheaply but does NOT auto-promote on AZ failure. Same-AZ replica = free cross-AZ read traffic.",
+      "RDS Read Replica — asynchronous read-only copy of a source RDS primary (can be in a different AZ). Requires a primary RDS on the board. Offloads reads cheaply but does NOT auto-promote on AZ failure. Same-AZ replica = free cross-AZ read traffic.",
     examTip:
       "Read Replicas have asynchronous lag — not for RPO=0 scenarios. Can be promoted manually (takes time). Cross-region replicas enable disaster recovery. Max 5 replicas per source RDS instance.",
   },
@@ -404,6 +419,21 @@ export function canConnect(roleA, roleB) {
   const b = CONNECT[roleB];
   if (!a || !b) return false;
   return a.has(roleB) && b.has(roleA);
+}
+
+// Service-level wire legality: role compatibility plus per-service constraints
+// that model real AWS topology. Order-independent (wires are undirected).
+//   - Gateway VPC Endpoint may only front the sinks in its `validSinks` list
+//     (S3, DynamoDB) — it cannot provide a private path to RDS/Aurora/etc.
+export function canWire(svcA, svcB) {
+  if (!svcA || !svcB) return false;
+  if (!canConnect(svcA.role, svcB.role)) return false;
+  const vpceViolation = (front, back) =>
+    front.validSinks &&
+    SINK_ROLES.has(back.role) &&
+    !front.validSinks.includes(back.id);
+  if (vpceViolation(svcA, svcB) || vpceViolation(svcB, svcA)) return false;
+  return true;
 }
 
 export function getService(id) {

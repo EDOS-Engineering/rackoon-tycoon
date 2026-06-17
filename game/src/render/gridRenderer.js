@@ -6,7 +6,7 @@
 import { PALETTE } from "../theme.js";
 import { Grid, TILE } from "../grid/grid.js";
 import { drawService, roundRect } from "./sprites.js";
-import { AZ_COUNT, zoneColumnRange, AZ_LABELS } from "../waves/events.js";
+import { AZ_COUNT, zoneColumnRange, zoneOfColumn, AZ_LABELS } from "../waves/events.js";
 
 // Draw the dark workshop floor + grid lines, only across the grid bounds.
 export function drawFloor(ctx, grid, time) {
@@ -65,6 +65,18 @@ export function drawWires(ctx, grid, time) {
   ctx.beginPath();
   grid.forEachEdge((c1, r1, c2, r2) => {
     line(ctx, c1, r1, c2, r2);
+  });
+  ctx.stroke();
+
+  // Cross-AZ overlay: wires whose ends sit in different AZ bands carry an
+  // inter-AZ data-transfer cost — tint them amber so the price is visible.
+  ctx.strokeStyle = "rgba(255,179,71,0.7)";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  grid.forEachEdge((c1, r1, c2, r2) => {
+    if (zoneOfColumn(c1, grid.cols) !== zoneOfColumn(c2, grid.cols)) {
+      line(ctx, c1, r1, c2, r2);
+    }
   });
   ctx.stroke();
 
@@ -131,11 +143,12 @@ export function drawBuildings(ctx, grid, time = 0) {
       ctx.restore();
     }
 
+    const dim = b.disabled || b.invalid;
     drawService(ctx, b.service, cx, cy, {
-      bob: b.disabled ? 0 : b.bob,
+      bob: dim ? 0 : b.bob,
       look: { x: b.eyeTargetX, y: b.eyeTargetY },
       activity: b.activity,
-      alpha: b.disabled ? 0.32 : 1,
+      alpha: dim ? 0.32 : 1,
     });
 
     // Offline overlay (AZ failure): dim + a red "zzz/down" mark.
@@ -146,6 +159,23 @@ export function drawBuildings(ctx, grid, time = 0) {
       ctx.textBaseline = "middle";
       ctx.fillStyle = PALETTE.bad;
       ctx.fillText("⚡✕", cx, cy - TILE * 0.34);
+      ctx.restore();
+    } else if (b.invalid) {
+      // Structural-dependency overlay (e.g. Read Replica with no primary):
+      // a dashed amber ring + warning mark, distinct from the AZ-down state.
+      ctx.save();
+      ctx.strokeStyle = PALETTE.warn;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.42, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "700 16px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = PALETTE.warn;
+      ctx.fillText("⚠", cx, cy - TILE * 0.34);
       ctx.restore();
     }
   }
