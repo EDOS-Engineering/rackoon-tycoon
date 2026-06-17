@@ -33,6 +33,7 @@ import { EventDirector, zoneOfColumn } from "../waves/events.js";
 import { evaluate, OUTCOME } from "../economy/scoring.js";
 import { MilestoneSet } from "./milestones.js";
 import { RealismTracker } from "./realism.js";
+import { Telemetry } from "./telemetry.js";
 
 // Run modes (R6): a bounded campaign "scenario" (binary win/lose), or an endless
 // "freerun" company that runs until bankruptcy/quit and is judged on milestones.
@@ -82,7 +83,11 @@ export class Simulation {
     // `sloMs` is the per-request latency objective (a tile's served latency must
     // land under it). Defaults to a reasonable target so the metric is always live.
     this.sloMs = level.sloMs != null ? level.sloMs : 60;
+    // SLO target (compliance fraction) the error-budget burn is measured against.
+    this.sloTarget = level.sloTarget != null ? level.sloTarget : 0.95;
     this.realism = new RealismTracker();
+    // T7.5: live operator telemetry (demand sparkline, margin, SLO burn, headroom).
+    this._telemetry = new Telemetry();
 
     // Outcome + resilience tracking.
     this.outcome = OUTCOME.PLAYING; // PLAYING | WIN | LOSE
@@ -188,6 +193,9 @@ export class Simulation {
       if (b.disabled) downCap += cap;
     }
     this.realism.tick(dt, this.routeOk, totalCap, downCap);
+
+    // T7.5: refresh the live operator telemetry (derived signals + sparkline).
+    this._telemetry.update(dt, this);
 
     this._checkOutcome();
   }
@@ -320,6 +328,12 @@ export class Simulation {
   // Current milestone evaluation (company mode HUD + results read this).
   evaluateMilestones() {
     return this.milestones.evaluate(this.metrics());
+  }
+
+  // Live operator telemetry snapshot (T7.5) — demand/margin/SLO-burn/headroom +
+  // short sparkline histories. Read by the HUD and the headless balancer.
+  telemetry() {
+    return this._telemetry.snapshot();
   }
 
   // ---- Save / resume (R6) -------------------------------------------------

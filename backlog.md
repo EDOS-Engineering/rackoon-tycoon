@@ -19,6 +19,15 @@
   branches to `_renderCompany` when `mode==="freerun"`. Surfaces everything the Phase-7 sim
   tracks. Smoke asserts the cash-out hands the results scene a company-shaped payload (mode +
   4 milestones + ops scorecard). → `scenes/{levelScene,resultsScene}.js`, `tooling/smoke.mjs`. headless 0; smoke 0/0.
+- **2026-06-17 — Phase 7 T7.5 telemetry depth (feature branch).** New `sim/telemetry.js`
+  `Telemetry` derives the live operator instrument panel from sim state: **demand** (current
+  + rolling sparkline), **margin $/s** (revenue rate − burn, smoothed), **SLO burn**
+  (error-budget burn vs allowed, off a new `sloTarget`), and **headroom** (1 − busiest
+  serving load). `Simulation.telemetry()` exposes a snapshot; the OPS-TELEMETRY HUD chip
+  became a full panel (outcome row + operator-signal row + demand sparkline). Headless reads
+  the signals for curve tuning (min-headroom / peak-demand sweep) and asserts they're sane,
+  curve-tracking, and deterministic. → `sim/{telemetry,simulation}.js`, `scenes/levelScene.js`,
+  `tooling/headless.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — Phase 7 T7.6 realism polish (feature branch).** New `sim/realism.js`
   `RealismTracker` rolls up four operational signals real architects answer to: **latency-SLO
   compliance**, **blast radius** (peak capacity-weighted fraction an incident downs), **RTO**
@@ -422,8 +431,16 @@ Epoch makes the world *alive*.
   or save-and-resume) with milestones (users served, uptime SLOs, margin targets)
   instead of a single goalRequests number. Build a system that *survives and grows*.
   → new mode in `levels.js` + persistence in `save/`.
-- **T7.5 Balancing + telemetry** — surface the live signals (demand curve, margin,
-  SLO burn, headroom) so the player can reason like an operator; tune curves headlessly.
+- **T7.5 Balancing + telemetry. ✅ DONE (2026-06-17).** New `sim/telemetry.js` `Telemetry`
+  (pure derivation over sim state) computes the live operator instrument panel: **demand**
+  (current multiplier + a rolling sparkline history), **margin $/s** (revenue rate − burn,
+  EMA-smoothed), **SLO burn** (error-budget burn vs the allowed rate, off a new `sloTarget`),
+  and **headroom** (1 − busiest serving tile's load). `Simulation` updates it each step and
+  exposes `telemetry()`. The level's OPS-TELEMETRY HUD chip grew into a full panel: the T7.6
+  outcome row, the T7.5 operator-signal row, and a demand sparkline. Headless reads the
+  signals to tune curves (min-headroom / peak-demand sweep) and asserts they're sane,
+  curve-tracking, and **deterministic** for a fixed seed. → `sim/{telemetry,simulation}.js`,
+  `scenes/levelScene.js`, `tooling/headless.mjs`. headless 0; smoke 0/0.
 - **T7.6 Realism deepening. ✅ DONE (2026-06-17).** New `sim/realism.js` `RealismTracker`
   (pure) rolls up the four ops numbers a real review grades: **latency-SLO compliance**
   (served round-trips under `sloMs`), **blast radius** (peak capacity-weighted fraction an
