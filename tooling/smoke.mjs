@@ -165,13 +165,20 @@ const levels3c = await page.evaluate(async () => {
   const m = await import("./src/levels/levels.js");
   const lp = m.LEVELS.leaky_pipe;
   const mb = m.LEVELS.mesh_bridge;
+  const pvl = m.LEVELS.private_lines;
+  const lck = m.LEVELS.locked_buckets;
   return {
     levelCount: m.LEVEL_ORDER.length,
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
-    meshBridgeIsLast: m.LEVEL_ORDER.at(-1) === "mesh_bridge",
+    lastIsLocked: m.LEVEL_ORDER.at(-1) === "locked_buckets",
     singleWriterNext: m.LEVELS.single_writer?.next === "mesh_bridge",
     meshNeedsTgw: (mb?.winRequires?.edgeTypeAny || []).includes("tgw"),
+    // Phase 6 Secure sprint.
+    privateNeedsPlink: (pvl?.winRequires?.edgeTypeAny || []).includes("privatelink"),
+    privateExcludesNat: (pvl?.winRequires?.pathExcludes || []).includes("nat_gateway"),
+    lockedNeedsCloudfront: (lck?.winRequires?.pathContainsAll || []).includes("cloudfront"),
+    lockedExcludesNat: (lck?.winRequires?.pathExcludes || []).includes("nat_gateway"),
   };
 });
 
@@ -410,28 +417,66 @@ const transitive5b = await page.evaluate(async () => {
   const gm = await import("./src/grid/grid.js");
   const pf = await import("./src/grid/pathfind.js");
   const cn = await import("./src/services/connections.js");
-  const g = new gm.Grid(12, 6);
   const K = (c, r) => c + "," + r;
+
+  // (a) Two peering hops in series can't reach the third node.
+  const g = new gm.Grid(12, 6);
   g.place(S.route53, 0, 0);
   g.place(S.ec2, 1, 0);
   g.place(S.alb, 2, 0);
-  g.place(S.rds, 3, 0);
-  // gate —vpc→ ec2 —PEERING→ alb —vpc→ rds. alb is entered over peering, so it
-  // can't be transited onward to rds → no route to the sink.
+  g.place(S.cache, 3, 0);
+  g.place(S.rds, 4, 0);
+  // gate —vpc→ ec2 —PEER→ alb —PEER→ cache —vpc→ rds. At alb (entered over
+  // peering) leaving over peering again is non-transitive → cache/rds unreachable.
   g.addEdge(K(0, 0), K(1, 0), "vpc");
   g.addEdge(K(1, 0), K(2, 0), "peering");
-  g.addEdge(K(2, 0), K(3, 0), "vpc");
+  g.addEdge(K(2, 0), K(3, 0), "peering");
+  g.addEdge(K(3, 0), K(4, 0), "vpc");
   const blockedByPeeringChain = !pf.gateHasRoute(g, K(0, 0));
   // Swap the middle hop to a Transit Gateway (transitive) → route forms.
-  g.removeEdge(1, 0, 2, 0);
-  g.addEdge(K(1, 0), K(2, 0), "tgw");
+  g.removeEdge(2, 0, 3, 0);
+  g.addEdge(K(2, 0), K(3, 0), "tgw");
   const okViaTgw = pf.gateHasRoute(g, K(0, 0));
+
+  // (b) A single peering hop to a sink must still complete the round trip.
+  const g2 = new gm.Grid(8, 6);
+  g2.place(S.route53, 0, 0);
+  g2.place(S.ec2, 1, 0);
+  g2.place(S.rds, 2, 0);
+  g2.addEdge(K(0, 0), K(1, 0), "vpc");
+  g2.addEdge(K(1, 0), K(2, 0), "peering"); // compute —peering→ DB
+  const singlePeeringRoundTrip = pf.gateHasRoute(g2, K(0, 0));
+
   return {
     blockedByPeeringChain,
     okViaTgw,
+    singlePeeringRoundTrip,
     peeringNonTransitive: cn.isTransitive("peering") === false,
     tgwTransitive: cn.isTransitive("tgw") === true,
   };
+});
+
+// Phase 6 Secure (T6.1): private_lines blocks a NAT/public route and accepts a
+// PrivateLink route. Uses the level's seeded NAT + DynamoDB.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "private_lines" }));
+await page.waitForTimeout(300);
+const secureWin = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  // Seeded NAT at (8,2), DynamoDB at (12,4). Route the public way first.
+  s.grid.addEdge(K(gc, gr), K(8, 2), "vpc");  // gate -> NAT
+  s.grid.addEdge(K(8, 2), K(12, 4), "vpc");   // NAT -> DDB
+  const natBlocked = !s._checkWinRequires().ok;
+  // Tear down the NAT path, expose the DB privately over PrivateLink.
+  s.grid.removeEdge(gc, gr, 8, 2);
+  s.grid.removeEdge(8, 2, 12, 4);
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(12, 4), "privatelink");
+  const plinkOk = s._checkWinRequires().ok;
+  return { natBlocked, plinkOk };
 });
 
 await browser.close();
@@ -455,6 +500,7 @@ console.log("typedConns:", JSON.stringify(typedConns));
 console.log("sceneConn:", JSON.stringify(sceneConn));
 console.log("edgeWinReq:", JSON.stringify(edgeWinReq));
 console.log("transitive5b:", JSON.stringify(transitive5b));
+console.log("secureWin:", JSON.stringify(secureWin));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -486,12 +532,16 @@ if (!catalog3b.rdsMAZResilient)        problems.push("RDS Multi-AZ azResilient s
 if (!catalog3b.aurSV2AutoScale)        problems.push("Aurora SV2 autoScale should be true");
 if (!catalog3b.streamsReplayable)      problems.push("Kinesis Streams replayable should be true");
 if (catalog3b.groupCount !== 5)        problems.push("PALETTE_GROUPS should have 5 groups");
-if (levels3c.levelCount !== 8)      problems.push("LEVEL_ORDER should have 8 levels (incl. mesh_bridge)");
+if (levels3c.levelCount !== 10)     problems.push("LEVEL_ORDER should have 10 levels (incl. Phase 6 Secure sprint)");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.meshBridgeIsLast)     problems.push("mesh_bridge should be the last level");
+if (!levels3c.lastIsLocked)         problems.push("locked_buckets should be the last level");
 if (!levels3c.singleWriterNext)     problems.push("single_writer.next should chain to mesh_bridge");
 if (!levels3c.meshNeedsTgw)         problems.push("mesh_bridge winRequires should demand a TGW edge");
+if (!levels3c.privateNeedsPlink)    problems.push("private_lines should require a PrivateLink edge");
+if (!levels3c.privateExcludesNat)   problems.push("private_lines should exclude nat_gateway from the route");
+if (!levels3c.lockedNeedsCloudfront) problems.push("locked_buckets should require CloudFront in the route");
+if (!levels3c.lockedExcludesNat)    problems.push("locked_buckets should exclude nat_gateway from the route");
 // Pre-Phase-5 fix assertions.
 if (azFix.distinctZones < 2)        problems.push("AZ failure zone not randomized — all " + azFix.distinctZones + " trials hit same zone");
 if (!winReq.leakyHasReq)            problems.push("leaky_pipe missing winRequires");
@@ -545,6 +595,9 @@ if (!transitive5b.peeringNonTransitive) problems.push("peering should be non-tra
 if (!transitive5b.tgwTransitive)    problems.push("TGW should be transitive");
 if (!transitive5b.blockedByPeeringChain) problems.push("5b: a two-peering chain should NOT route to a third node");
 if (!transitive5b.okViaTgw)         problems.push("5b: a transitive TGW hop should route through");
+if (!transitive5b.singlePeeringRoundTrip) problems.push("5b: a single peering hop to a sink should still round-trip");
+if (!secureWin.natBlocked)          problems.push("private_lines: a NAT/public route should NOT win");
+if (!secureWin.plinkOk)             problems.push("private_lines: a PrivateLink route should win");
 
 console.log("phase4:", JSON.stringify(phase4));
 

@@ -521,6 +521,16 @@ export class LevelScene extends Scene {
       }
     }
 
+    // pathExcludes: none of the listed service ids may appear in the path (e.g.
+    // "no public/NAT hop"). Forces the lesson's *avoidance* requirement.
+    if (req.pathExcludes) {
+      for (const id of req.pathExcludes) {
+        if (pathIds.has(id)) {
+          return { ok: false, hint: req.requirementHint || "Route must avoid a disallowed service" };
+        }
+      }
+    }
+
     // Edge-type requirements (Phase 5 typed connections): inspect the connection
     // type of each wire the active path traverses. Lets a level demand e.g. a
     // Transit Gateway hop (Mesh vs Bridge) or a PrivateLink hop (private access).

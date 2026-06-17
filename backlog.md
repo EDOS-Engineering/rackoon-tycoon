@@ -9,6 +9,7 @@
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
 - **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
+- **2026-06-17 — Phase 6 Sprint 6a shipped (Secure domain).** Two curriculum levels, no new services: "Private Lines" (reach a private DynamoDB over PrivateLink, no NAT — `edgeTypeAny:["privatelink"]` + new `pathExcludes`) and "Locked Buckets" (private S3 served only via CloudFront/OAC — `pathContainsAll:["cloudfront"]` + `pathExcludes`). Campaign now 10 levels; Secure domain has 3 boss levels. Added `pathExcludes` to `_checkWinRequires`. Also corrected the 5b router rule: it was blocking round-trip return legs through a sink reached over peering/PrivateLink — now a node is non-transitable only when BOTH its entry and exit edges are non-transitive (peering→peering), so single peering/PrivateLink hops to a sink round-trip correctly. → `levels.js`, `levelScene.js`, `pathfind.js`, `smoke.mjs`. smoke: 0 errors, 0 problems.
 - **2026-06-17 — Phase 5b shipped (transitive routing) + honest boot error.** Connection types carry a `transitive` flag (VPC/TGW transitive; Peering/PrivateLink not); the router (`pathfind.js` BFS) won't transit a node reached over a non-transitive link — a two-peering A—B—C chain can't reach C, while a Transit Gateway hub routes through. Phase 5 now fully complete. Separately, `game.html`'s startup fallback now surfaces the real error + a hard-reload hint (stale cached modules after an update were showing the misleading "needs a server" message). → `connections.js`, `pathfind.js`, `game.html`, `smoke.mjs`. smoke: 0 errors, 0 problems.
 - **2026-06-17 — Phase 3 & Phase 5 closed out.** (T3.2) "Mesh vs Bridge" campaign finale — Transit Gateway hub vs N² peering mesh; 8th campaign level, wins require a TGW hop. (T5.3) edge-type `winRequires` (`edgeTypeAll`/`edgeTypeAny`) inspects the connection type of wires on the active path — the capability T3.2 needed; also unblocks a future PrivateLink-edge level. (T3.7) teaching layer — briefing now shows an up-front exam-tip strip with a study-guide tie-back (reinforced again on results). Only Phase 5b (transitive-routing sim) remains, explicitly deferred. → `levels.js`, `levelScene.js`, `smoke.mjs`. smoke: 0 errors, 0 problems (8 levels).
 - **2026-06-17 — Phase 5 T5.1/T5.2 shipped (typed connections).** Wires now carry a real AWS networking construct. Edge type stored on the grid (`edgeType` map; `addEdge(...,type)`, `getEdgeType`, `forEachEdge` passes type). Four types: VPC link (default), VPC Peering, Transit Gateway (+2/hop processing), PrivateLink (+1.3/hop but cross-AZ exempt, must end at a sink). Picker row in the build bar (chips + hover tooltip) and `C` to cycle; `_commitWire`/preview validate `connTypeAllows`; billing adds `conn.hopCost` and skips the cross-AZ penalty when `crossAzExempt`; renderer colours each edge by type and tints only non-exempt cross-AZ wires. → `grid.js`, `connections.js`, `levelScene.js`, `ui/palette.js`, `render/gridRenderer.js`, help text, `smoke.mjs`. Deferred: transitive-routing sim (Phase 5b), Direct Connect (needs on-prem node). smoke: 0 errors, 0 problems.
@@ -280,18 +281,22 @@ Each new level: **concept → exam lesson → win mechanic → new deps.** "win 
 reuses the `winRequires` system (`sinkIs` / `pathContainsAll` / `pathContainsAny`,
 extended where noted); events reuse `EventDirector`.
 
-**Sprint 6a — Secure (after `raccoons_gate`)**
-- **T6.1 "Private Lines"** — reach a private DB/S3 with zero public exposure.
-  *Lesson:* PrivateLink / Gateway endpoints vs NAT/public. *Win:* sink reached via a
-  `privatelink` edge **or** `vpc_endpoint`; **fail** if the path uses `nat_gateway`
-  or a public hop. *Deps:* none (Phase 5 typed edges + VPCE already exist) — needs a
-  `winRequires` check on **edge type** (small extension to `_checkWinRequires`).
-- **T6.2 "Locked Buckets"** — serve private S3 only through CloudFront (OAC) + encryption.
-  *Lesson:* S3 not public, OAC, encryption at rest. *Win:* S3 sink reached only via
-  `cloudfront`; direct public S3 path fails. *Deps:* an "encrypted / OAC" flag on S3
-  (data-only) + optional `kms` tile.
-- **T6.3 "Secret Keeper"** *(optional / stretch)* — no hard-coded creds; pull from a
+**Sprint 6a — Secure ✅** (3 Secure levels now: `raccoons_gate` + these two)
+- [x] **T6.1 "Private Lines"** — reach a private DynamoDB with zero public exposure.
+  Win: route reaches the DB over a `privatelink` edge with **no** `nat_gateway` hop
+  (`edgeTypeAny:["privatelink"]` + new `pathExcludes`). Seeded NAT is the trap. No
+  new services. → `levels.js`, `levelScene.js` (added `pathExcludes` to `winRequires`).
+- [x] **T6.2 "Locked Buckets"** — serve private S3 only through CloudFront (OAC).
+  Win: `sinkIs:["s3"]` + `pathContainsAll:["cloudfront"]` + `pathExcludes:["nat_gateway"]`.
+  Encryption-at-rest / OAC taught via intro + exam tip (no new tile needed). → `levels.js`.
+- [ ] **T6.3 "Secret Keeper"** *(optional / stretch)* — no hard-coded creds; pull from a
   secrets store. *Deps:* **NEW** `secrets_manager` (or `kms`) tile. Cut if scope tight.
+
+> Router correction made here (needed for PrivateLink levels): the 5b non-transitive
+> rule was too strict — it blocked the **round-trip return leg** through a sink reached
+> over peering/PrivateLink. Fixed to the accurate rule: a node can't be transited only
+> when **both** its entry and exit edges are non-transitive (peering→peering). Single
+> peering/PrivateLink hops to a sink now round-trip correctly. → `grid/pathfind.js`.
 
 **Sprint 6b — Resilient**
 - **T6.4 "Decouple or Drown"** — absorb a traffic spike with a queue between tiers.

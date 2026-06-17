@@ -18,14 +18,18 @@ import { isTransitive } from "../services/connections.js";
 // in Phase 2 so an AZ-failure event disables every tile in the failed zone and
 // requests must reroute around it.
 //
-// Phase 5b — transitive routing: a node reached over a NON-transitive link (VPC
-// Peering / PrivateLink) may be a final destination but cannot be *transited*
-// onward, modelling peering's non-transitivity (A—B—C over two peerings can't
-// reach C). Transitive links (VPC, Transit Gateway hub) route through freely.
+// Phase 5b — transitive routing: a node may not be transited by chaining TWO
+// non-transitive links through it (enter AND leave over a non-transitive type).
+// This models VPC Peering's non-transitivity (peering A—B + B—C does NOT route
+// A→C) without breaking legitimate single-hop use: reaching a sink over peering
+// or PrivateLink — and the round-trip back — stays valid, because the return leg
+// leaves that node over a transitive VPC link. Transitive links (VPC, Transit
+// Gateway hub) chain freely.
 function bfs(grid, startKey, goalTest, isBlocked) {
   const cameFrom = new Map();
   cameFrom.set(startKey, null);
-  const noTransit = new Set(); // nodes entered via a non-transitive link
+  const entryType = new Map(); // node -> connection type of the edge it was reached by
+  entryType.set(startKey, null);
   const queue = [startKey];
   let head = 0;
 
@@ -36,13 +40,15 @@ function bfs(grid, startKey, goalTest, isBlocked) {
     if (cur !== startKey && b && goalTest(cur, b)) {
       return reconstruct(cameFrom, startKey, cur);
     }
-    // Can't route onward through a node reached over a non-transitive link.
-    if (noTransit.has(cur)) continue;
+    const enteredNonTransitive = !isTransitive(entryType.get(cur) || "vpc");
     for (const nk of grid.neighbors(cur)) {
       if (cameFrom.has(nk)) continue;
       if (isBlocked && nk !== startKey && isBlocked(nk)) continue;
+      const t = grid.getEdgeType(cur, nk);
+      // Non-transitive in, non-transitive out → can't transit this node.
+      if (enteredNonTransitive && !isTransitive(t)) continue;
       cameFrom.set(nk, cur);
-      if (!isTransitive(grid.getEdgeType(cur, nk))) noTransit.add(nk);
+      entryType.set(nk, t);
       queue.push(nk);
     }
   }

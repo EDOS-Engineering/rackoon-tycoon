@@ -277,7 +277,7 @@ export const LEVELS = {
       { id: "ec2", col: 11, row: 7 },
     ],
     goalRequests: 80,
-    next: null, // end of the campaign chain
+    next: "private_lines",
     waves: [
       { name: "Warm-up",        duration: 18, rate: 0.9 },
       { name: "Cross-VPC flow", duration: 28, rate: 1.5 },
@@ -298,6 +298,92 @@ export const LEVELS = {
       "Several network segments need to talk to each other and reach a database. With VPC Peering you'd wire every pair — that's an N² mesh that explodes as you add VPCs, and peering is non-transitive (A↔B and B↔C does NOT give A↔C).\n\nTransit Gateway is the hub: attach each VPC once and it routes transitively between all of them. Fewer connections, scales to thousands of attachments.\n\nPick the connection type in the build bar (or press C to cycle): VPC · Peering · TGW · PrivateLink. Wire your route through a Transit Gateway hop.\n\n⚠ WIN CONDITION: the route must cross a Transit Gateway (TGW) connection.\n\nRoute 80 to win.",
     examTip:
       "Transit Gateway = transitive, hub-and-spoke, scales to thousands of VPCs ($0.02/GB processed + attachment/hr). VPC Peering = 1:1, no processing fee, but non-transitive and an N² mesh at scale. On SAA-C03: many VPCs that must interconnect → Transit Gateway.",
+  },
+
+  // === PHASE 6 — SAA-C03 curriculum coverage ===
+
+  // T6.1 — Domain: Secure. Reach a private database with zero public exposure:
+  // PrivateLink (interface endpoint), never the NAT/public path.
+  private_lines: {
+    id: "private_lines",
+    name: "Private Lines",
+    subtitle: "Reach the database privately — no public hop",
+    cols: 16,
+    rows: 9,
+    budget: 2600,
+    spawnRate: 0.9,
+    gates: [{ col: 1, row: 4 }],
+    // A NAT Gateway (the tempting public path) and a DynamoDB sink are seeded.
+    // The lesson: expose the DB privately over PrivateLink instead of routing
+    // out through NAT. (Win forbids a nat_gateway hop.)
+    seed: [
+      { id: "nat_gateway", col: 8, row: 2 },
+      { id: "dynamodb",    col: 12, row: 4 },
+    ],
+    goalRequests: 60,
+    next: "locked_buckets",
+    waves: [
+      { name: "Quiet",         duration: 20, rate: 0.8 },
+      { name: "Steady flow",   duration: 28, rate: 1.4 },
+      { name: "Compliance audit", duration: 26, rate: 1.7 },
+      { name: "Wind-down",     duration: 18, rate: 1.2 },
+    ],
+    events: [
+      { at: 30, kind: "cost_audit", duration: 16, warn: 6, magnitude: 1.8 },
+    ],
+    slaMaxDropRate: 0.34,
+    // Win requires the route to reach the DB over a PrivateLink edge, with no
+    // NAT/public hop anywhere on the path.
+    winRequires: {
+      edgeTypeAny: ["privatelink"],
+      pathExcludes: ["nat_gateway"],
+      requirementHint: "Expose the database over PrivateLink (press C → PLINK, wire compute → DB) and keep the NAT Gateway out of the route",
+    },
+    intro:
+      "Security review: this database must NOT be reachable over the public internet. A NAT Gateway is on the board — the tempting (and wrong) answer is to route out through it.\n\nPrivateLink exposes a single service privately via an interface endpoint (ENI). Traffic stays on the AWS private network — no public exposure, and no cross-AZ penalty.\n\nPick the connection type (press C to cycle, or the picker): wire your compute to the database with a PrivateLink (PLINK) connection. Leave the NAT Gateway out of the path.\n\n⚠ WIN CONDITION: route reaches the DB over a PrivateLink edge, with no NAT/public hop.\n\nRoute 60 to win.",
+    examTip:
+      "PrivateLink (interface endpoint, per-hour + per-GB) privately exposes ONE service — yours, a partner's, or on-prem — with no internet exposure. Gateway endpoints (free) cover only S3 + DynamoDB. NAT Gateway routes to the public internet and bills $0.045/GB. Private data path → PrivateLink or a Gateway endpoint, never NAT.",
+  },
+
+  // T6.2 — Domain: Secure. Serve a private S3 bucket only through CloudFront
+  // (OAC) — no public bucket, no NAT/public path.
+  locked_buckets: {
+    id: "locked_buckets",
+    name: "Locked Buckets",
+    subtitle: "Private S3, served only through the CDN",
+    cols: 16,
+    rows: 9,
+    budget: 2600,
+    spawnRate: 0.95,
+    gates: [{ col: 1, row: 4 }],
+    seed: [
+      { id: "s3",          col: 12, row: 4 },
+      { id: "nat_gateway", col: 8, row: 6 },
+    ],
+    goalRequests: 65,
+    next: null, // end of the campaign chain (for now)
+    waves: [
+      { name: "Warm-up",      duration: 18, rate: 0.9 },
+      { name: "Content rush",  duration: 28, rate: 1.6 },
+      { name: "Viral spike",   duration: 26, rate: 2.1 },
+      { name: "Wind-down",    duration: 16, rate: 1.2 },
+    ],
+    events: [
+      { at: 32, kind: "traffic_spike", duration: 12, warn: 6, magnitude: 2.0 },
+      { at: 58, kind: "cost_audit",    duration: 12, warn: 5, magnitude: 1.5 },
+    ],
+    slaMaxDropRate: 0.34,
+    // Win: S3 served via CloudFront (OAC), no public/NAT hop in the route.
+    winRequires: {
+      sinkIs: ["s3"],
+      pathContainsAll: ["cloudfront"],
+      pathExcludes: ["nat_gateway"],
+      requirementHint: "Serve S3 through CloudFront (OAC) — put CloudFront in the route, keep the NAT Gateway out",
+    },
+    intro:
+      "Your S3 bucket holds private content. Exposing it publicly is a breach waiting to happen — and routing through the NAT Gateway is expensive and still public.\n\nThe pattern: keep the bucket private and serve it only through CloudFront with Origin Access Control (OAC). CloudFront caches at the edge (cheap, fast) and is the single, controlled door to the bucket.\n\nWire the route through CloudFront to S3. Keep the NAT Gateway out of the path.\n\n⚠ WIN CONDITION: reach S3 via CloudFront, with no NAT/public hop.\n\nRoute 65 to win.",
+    examTip:
+      "CloudFront + OAC (Origin Access Control) locks an S3 bucket to CloudFront-only access — the bucket stays private, no public reads. Enforce encryption at rest (SSE-S3/SSE-KMS) and block public access. Signed URLs/cookies gate private content. This cuts origin load and egress cost too.",
   },
 
   // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
@@ -333,6 +419,8 @@ export const LEVEL_ORDER = [
   "replay_or_gone",
   "single_writer",
   "mesh_bridge",
+  "private_lines",
+  "locked_buckets",
 ];
 
 export const FIRST_LEVEL = "first_light";
