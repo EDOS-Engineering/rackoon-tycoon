@@ -40,6 +40,7 @@ import {
 } from "../waves/events.js";
 import { evaluate, score, azSpread, OUTCOME } from "../economy/scoring.js";
 import { SINK_ROLES, ROLE } from "../services/catalog.js";
+import { getDifficulty } from "../save/difficulty.js";
 
 export class LevelScene extends Scene {
   enter(payload) {
@@ -48,8 +49,12 @@ export class LevelScene extends Scene {
     this.grid = new Grid(level.cols, level.rows);
     this.time = 0;
 
+    // Difficulty (Phase 3: T3.8) — tightens budget + speeds up the whole round.
+    this.diff = getDifficulty();
+    this.speedMul = this.diff.speedMul;
+
     // Economy / counters.
-    this.budget = level.budget;
+    this.budget = Math.round(level.budget * this.diff.budgetMul);
     this.revenue = 0;
     this.lost = 0;
     this.success = 0;
@@ -244,9 +249,11 @@ export class LevelScene extends Scene {
     }
 
     // ---- The live sim (waves, bill, spawns, overload, win/lose) runs only once
-    // the shift has begun. ----
+    // the shift has begun. `sdt` is the difficulty-scaled timestep (T3.8): on
+    // harder tiers the whole round — waves, spawns, bill, guests — runs faster. ----
     if (this.started) {
-      this._tickSystems(dt);
+      const sdt = dt * this.speedMul;
+      this._tickSystems(sdt);
 
       // Spawn loop (rate scaled by the current wave + any traffic spike).
       if (this.routeOk) {
@@ -254,7 +261,7 @@ export class LevelScene extends Scene {
           this.level.spawnRate *
           this.waves.multiplier() *
           this.events.spawnMultiplier();
-        this._spawnAcc += dt * rate;
+        this._spawnAcc += sdt * rate;
         while (this._spawnAcc >= 1) {
           this._spawnAcc -= 1;
           this._spawnPacket();
@@ -265,10 +272,10 @@ export class LevelScene extends Scene {
 
       // Per-building load / overload from in-flight demand (T2.2).
       this.loadModel.measure(this.grid, this.packets);
-      this.loadModel.update(this.grid, dt);
+      this.loadModel.update(this.grid, sdt);
 
       // Advance packets.
-      this._updatePackets(dt);
+      this._updatePackets(sdt);
 
       // Evaluate win/lose every step.
       this._checkOutcome();
@@ -894,7 +901,7 @@ export class LevelScene extends Scene {
     }
     const w = 600;
     const pad = 22;
-    const titleH = 38;
+    const titleH = 54;
     const bodyH = lines.length * 18;
     const btnH = 46;
     const h = pad * 2 + titleH + bodyH + btnH + 18;
@@ -924,6 +931,14 @@ export class LevelScene extends Scene {
     ctx.fillStyle = PALETTE.accent;
     ctx.font = FONT.uiBig;
     ctx.fillText("🦝  " + this.level.name, x + pad, y + pad);
+    // Difficulty subtitle (T3.8).
+    ctx.font = FONT.uiSmall;
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.fillText(
+      "Difficulty: " + this.diff.name + "  ·  " + this.diff.tag + " — change on the title screen",
+      x + pad,
+      y + pad + 26
+    );
 
     // Body.
     ctx.font = FONT.uiSmall;

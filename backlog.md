@@ -3,11 +3,12 @@
 > **Build your cloud empire. Tame the traffic.**
 > AWS SAA-C03 study guide reborn as a browser game. **Factorio meets RollerCoaster Tycoon.**
 
-**Status:** Phase 2 ✅ **complete & tuned** — live AWS bill, wave scheduler, AZ-failure/traffic-spike/cost-audit events, per-building overload (queue→latency→drops), win/lose + 3-pillar star scoring, localStorage progress/unlocks, title-screen level select, and 3 campaign levels. Playtested + headless-verified (0 errors). Phase 3 (gap-puzzle boss levels) is next. Stack: zero-dep vanilla.
+**Status:** Phase 3 🚧 **in progress.** Sprint **3a landed & verified**: difficulty tiers (Architect / Senior / Principal — tighter budget + faster pace) and diagonal (8-neighbour) connections. Next in Phase 3: typed connections (T3.10), AWS-catalog breadth (3b), gap-mapped boss levels (3c). Phase 2 ✅ complete & tuned (economy, waves, events, win/lose, scoring, persistence, 3 levels). Stack: zero-dep vanilla.
 
 ## Progress log
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
+- **2026-06-16 — Phase 3 started (Sprint 3a).** Difficulty tiers (Architect base / Senior / Principal): each tightens budget (×1 / ×0.8 / ×0.65) and speeds the whole round (×1 / ×1.25 / ×1.5); selectable + persisted on the title screen, applied per level. Diagonal (8-neighbour) grid connections for wiring + routing (renderer + packet motion were already generic). Headless-verified: title difficulty selector, Principal briefing (budget $975), and a fully diagonal route flowing guests. → `save/difficulty.js`, `grid.js`, `scenes/titleScene.js`, `scenes/levelScene.js`.
 
 ---
 
@@ -103,18 +104,46 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 
 > **End of Phase 2:** ✅ a real game loop with stakes — committed, playtested, and tuned (intro-grace briefing, gentler economy, H help legend).
 
-### 🟠 PHASE 3 — Learning puzzles / boss gaps (Sprint 3)
+### 🟠 PHASE 3 — Mechanics, AWS-sim depth & boss gaps (Sprint 3)
 
-**Sprint 3 — Gap-mapped levels** (each teaches one Priority Gap)
-- [ ] T3.1 "The Leaky Pipe" — NAT money-leak; fix with Gateway VPC Endpoint tile.
+> **MVP Epoch goal:** by the end of this Epoch the game is a *semi-complete
+> simulation of the AWS ecosystem for solutions architecture* — a meaningfully
+> broad service catalog and real connection types, not merely generic wires.
+> Phase 3 is chunked into sub-sprints; each lands runnable + committed.
+
+**Sprint 3a — Mechanics & difficulty** ✅
+- [x] T3.8 Difficulty settings — 3 tiers; base = current pace. Each tightens the
+      **budget** and **speeds up** the whole round. Selectable + persisted on the
+      title screen, applied per level. → `save/difficulty.js`, `titleScene`, `levelScene`
+- [x] T3.9 Diagonal grid connections — 8-neighbour wiring + routing. → `grid.js`
+- [ ] T3.10 **Typed connections** (not merely wires) — an edge gains a *type*
+      mapping to a real AWS networking construct, each with distinct visuals + a
+      gameplay effect (e.g. a Gateway/PrivateLink **Endpoint** link with near-zero
+      data-transfer cost vs a plain VPC link; Transit Gateway / VPC peering /
+      Direct Connect as later types). Connection-type picker in the build bar.
+      → `grid.js`, `gridRenderer`, `ui/palette`, `economy/billing`, `levelScene`
+
+**Sprint 3b — AWS-sim breadth (toward the Epoch goal)**
+- [ ] T3.11 Expand the service catalog toward a semi-complete AWS set: edge/security
+      (CloudFront, WAF, Shield, NAT Gateway, VPC Endpoint), data (Kinesis Streams
+      vs Firehose, DAX), DB variants (read replica, Multi-AZ standby, Aurora
+      Limitless/Serverless) — each with stats, role, and connection rules.
+- [ ] T3.12 Topology rules per service/connection so designs reflect real AWS
+      constraints (tighten `canConnect` + connection-type legality).
+
+**Sprint 3c — Gap-mapped boss levels** (each teaches one Priority Gap)
+- [ ] T3.1 "The Leaky Pipe" — NAT money-leak; fix with a Gateway VPC Endpoint connection.
 - [ ] T3.2 "Mesh vs Bridge" — internal Lattice mesh vs PrivateLink to an external partner zone.
 - [ ] T3.3 "Replay or It's Gone" — Streams (replayable) vs Firehose (funnel-to-S3) under a data wave.
 - [ ] T3.4 "Single Writer's Burden" — DB overload: auto-grow (v2) vs shard (Limitless).
 - [ ] T3.5 "Raccoons at the Gate" — DDoS wave; place Shield/WAF/CloudFront.
-- [ ] T3.6 "When the Zone Goes Dark" — AZ failure; Multi-AZ standby vs read replica.
-- [ ] T3.7 In-level teaching cards + post-level "exam tip" tie-back.
+- [x] T3.6 "When the Zone Goes Dark" — AZ failure; spread across zones. *(shipped as the `zone_down` level in Phase 2; refine with Multi-AZ vs read-replica tiles in 3b.)*
 
-> **End of Phase 3:** content-complete, teaches the gaps. Commit.
+**Sprint 3d — Teaching layer**
+- [ ] T3.7 In-level teaching cards + post-level "exam tip" tie-back to the study guide.
+
+> **End of Phase 3:** difficulty + diagonal/typed connections + a broader AWS
+> catalog + the gap-mapped boss levels. Each sub-sprint commits independently.
 
 ### 🔵 PHASE 4 — Polish (Sprint 4)
 
@@ -123,7 +152,7 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 - [ ] T4.2 Audio (Web Audio): place/connect/alert/win sfx + ambient (if approved).
 - [ ] T4.3 Tutorial/onboarding + tooltips for every service tile.
 - [ ] T4.4 Sandbox/endless mode; difficulty settings.
-- [ ] T4.5 Accessibility (keyboard, colorblind-safe palette), perf pass, cross-browser check.
+- [ ] T4.5 ~~Accessibility (keyboard, colorblind-safe palette)~~ **— DEPRECATED** (descoped from this Epoch per request). Perf pass + cross-browser check only.
 - [ ] T4.6 Final QA, README for the game, link study guide ↔ game.
 
 > **End of Phase 4:** complete, polished, shippable. Final commit.

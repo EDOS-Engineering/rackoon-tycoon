@@ -46,7 +46,8 @@ const helpOpen = await page.evaluate(() => window.__rackoon.scenes.current.showH
 await page.keyboard.press("KeyH"); // close
 await page.waitForTimeout(150);
 
-// Begin the shift, build a legal gate→ALB→EC2→RDS route, let guests flow.
+// Begin the shift and build a fully DIAGONAL gate→ALB→EC2→RDS route (exercises
+// the new 8-neighbour wiring + routing), then let guests flow.
 const begin = await page.evaluate(async () => {
   const s = window.__rackoon.scenes.current;
   s.started = true;
@@ -54,12 +55,12 @@ const begin = await page.evaluate(async () => {
   const S = cat.SERVICES;
   const [gc, gr] = s.gateKeys[0].split(",").map(Number);
   const K = (c, r) => c + "," + r;
-  s.grid.place(S.alb, gc + 1, gr);
-  s.grid.place(S.ec2, gc + 2, gr);
-  s.grid.place(S.rds, gc + 3, gr);
-  s.grid.addEdge(K(gc, gr), K(gc + 1, gr));
-  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr));
-  s.grid.addEdge(K(gc + 2, gr), K(gc + 3, gr));
+  s.grid.place(S.alb, gc + 1, gr + 1); // diagonal from the gate
+  s.grid.place(S.ec2, gc + 2, gr); // diagonal from the ALB
+  s.grid.place(S.rds, gc + 3, gr + 1); // diagonal from the EC2
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr + 1));
+  s.grid.addEdge(K(gc + 1, gr + 1), K(gc + 2, gr));
+  s.grid.addEdge(K(gc + 2, gr), K(gc + 3, gr + 1));
   s._routeDirty = true;
   return { placed: s.grid.buildings.size };
 });
@@ -80,12 +81,45 @@ const playing = await page.evaluate(() => {
 });
 await page.screenshot({ path: "tooling/shot-playing.png" });
 
+// --- Diagonal adjacency rule (T3.9) ---
+const diag = await page.evaluate(async () => {
+  const m = await import("./src/grid/grid.js");
+  return {
+    orthogonal: m.Grid.areAdjacent(2, 2, 2, 3),
+    diagonal: m.Grid.areAdjacent(2, 2, 3, 3),
+    self: m.Grid.areAdjacent(2, 2, 2, 2),
+    twoAway: m.Grid.areAdjacent(2, 2, 4, 2),
+  };
+});
+
+// --- Difficulty scaling (T3.8): switch to the hardest tier, restart the level,
+// and confirm the budget tightens and the sim speed jumps. ---
+await page.evaluate(async () => {
+  const d = await import("./src/save/difficulty.js");
+  d.setDifficultyId("principal");
+  window.__rackoon.scenes.go("level", { levelId: "first_light" });
+});
+await page.waitForTimeout(500); // let the scene manager swap + run enter()
+const diff = await page.evaluate(() => {
+  const s = window.__rackoon.scenes.current;
+  return {
+    name: s.diff ? s.diff.name : "?",
+    speedMul: s.speedMul,
+    budget: s.budget,
+    baseBudget: s.level.budget,
+  };
+});
+await page.waitForTimeout(400);
+await page.screenshot({ path: "tooling/shot-difficulty.png" }); // briefing on Principal tier
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
 console.log("help open:", helpOpen);
 console.log("begin:", JSON.stringify(begin));
 console.log("playing:", JSON.stringify(playing));
+console.log("diagonal:", JSON.stringify(diag));
+console.log("difficulty:", JSON.stringify(diff));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
 // Behaviour assertions.
@@ -100,6 +134,11 @@ if (!playing.routeOk) problems.push("route not valid after a legal build");
 if (playing.success <= 0) problems.push("no guests routed after begin");
 if (playing.budget >= playing.startBudget) problems.push("bill did not draw the budget down");
 if (playing.budget <= 0) problems.push("budget hit $0 within ~5s (too harsh)");
+if (!diag.orthogonal || !diag.diagonal) problems.push("diagonal adjacency not enabled");
+if (diag.self || diag.twoAway) problems.push("areAdjacent too permissive");
+if (diff.name !== "Principal Architect") problems.push("difficulty did not switch to Principal");
+if (diff.speedMul !== 1.5) problems.push("Principal speedMul != 1.5");
+if (!(diff.budget < diff.baseBudget)) problems.push("Principal did not tighten budget");
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 
 process.exit(errors.length || problems.length ? 1 : 0);

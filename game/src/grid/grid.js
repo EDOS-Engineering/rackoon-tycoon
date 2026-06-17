@@ -102,11 +102,12 @@ export class Grid {
     return this.edges.has(Grid.edgeKey(aKey, bKey));
   }
 
-  // Are two tiles orthogonally adjacent? (Wires are 4-neighbor in Phase 1.)
+  // Are two tiles adjacent? 8-neighbour (orthogonal + diagonal) so wires and
+  // routes can run diagonally across the grid (Phase 3: T3.9). Excludes self.
   static areAdjacent(c1, r1, c2, r2) {
     const dc = Math.abs(c1 - c2);
     const dr = Math.abs(r1 - r2);
-    return dc + dr === 1;
+    return dc <= 1 && dr <= 1 && dc + dr > 0;
   }
 
   addEdge(aKey, bKey) {

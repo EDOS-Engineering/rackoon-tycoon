@@ -8,12 +8,14 @@ import { drawRaccoon, roundRect } from "../render/sprites.js";
 import { load } from "../save/storage.js";
 import { LEVEL_ORDER, FIRST_LEVEL, getLevel } from "../levels/levels.js";
 import { isUnlocked, bestFor, totalStars } from "../save/progress.js";
+import { DIFFICULTIES, getDifficultyId, setDifficultyId } from "../save/difficulty.js";
 
 export class TitleScene extends Scene {
   enter() {
     this.t = 0;
     this.best = load("bestRouted", 0);
     this.totalStars = totalStars();
+    this.diffId = getDifficultyId();
     // "Continue" target: the furthest unlocked level (else the intro).
     this.continueId = FIRST_LEVEL;
     for (const id of LEVEL_ORDER) {
@@ -32,6 +34,7 @@ export class TitleScene extends Scene {
     }
     this._btn = { x: 0, y: 0, w: 0, h: 0 };
     this._levelBtns = []; // filled during render
+    this._diffBtns = []; // difficulty chips, filled during render
   }
 
   update(dt) {
@@ -41,6 +44,22 @@ export class TitleScene extends Scene {
     for (const s of this.sparks) {
       s.x += s.spd * dt * 0.15;
       if (s.x > 1.1) s.x -= 1.2;
+    }
+
+    // Hit-test difficulty chips (sets + persists the choice).
+    if (input.leftDown) {
+      for (const db of this._diffBtns) {
+        if (
+          input.x >= db.x &&
+          input.x <= db.x + db.w &&
+          input.y >= db.y &&
+          input.y <= db.y + db.h
+        ) {
+          setDifficultyId(db.id);
+          this.diffId = db.id;
+          return;
+        }
+      }
     }
 
     // Hit-test the level-select chips (only unlocked are clickable).
@@ -161,8 +180,9 @@ export class TitleScene extends Scene {
     ctx.fillText(playLabel, cx, by + bh / 2 + 1);
     ctx.textBaseline = "alphabetic";
 
-    // Level-select strip (campaign progress + unlocks).
-    this._renderLevelSelect(ctx, cx, by + bh + 26, W);
+    // Difficulty selector (T3.8) then the level-select strip below it.
+    this._renderDifficulty(ctx, cx, by + bh + 18, W);
+    this._renderLevelSelect(ctx, cx, by + bh + 92, W);
 
     // Best score + role flavor.
     ctx.fillStyle = PALETTE.textFaint;
@@ -173,6 +193,56 @@ export class TitleScene extends Scene {
         ? "Rocky's stars: " + this.totalStars + " ★   •   Best routed: " + this.best
         : "Meet Rocky, your raccoon SRE. Build the cloud. Tame the traffic.";
     ctx.fillText(flavor, cx, H - 20);
+  }
+
+  // A row of difficulty chips (T3.8). The selected tier is highlighted; clicking
+  // one persists the choice (applied to budget + speed when a level starts).
+  _renderDifficulty(ctx, cx, y, W) {
+    this._diffBtns = [];
+    const n = DIFFICULTIES.length;
+    const cw = 176;
+    const ch = 46;
+    const gap = 12;
+    const totalW = n * cw + (n - 1) * gap;
+    let x = cx - totalW / 2;
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = PALETTE.textFaint;
+    ctx.font = FONT.uiSmall;
+    ctx.fillText("DIFFICULTY", cx, y - 8);
+
+    for (const d of DIFFICULTIES) {
+      const sel = d.id === this.diffId;
+      const rect = { id: d.id, x, y: y + 4, w: cw, h: ch };
+      this._diffBtns.push(rect);
+      const over =
+        this.game.input.x >= x &&
+        this.game.input.x <= x + cw &&
+        this.game.input.y >= y + 4 &&
+        this.game.input.y <= y + 4 + ch;
+
+      ctx.fillStyle = sel || over ? PALETTE.bgPanelHi : PALETTE.bgPanel;
+      roundRect(ctx, x, y + 4, cw, ch, 10);
+      ctx.fill();
+      ctx.strokeStyle = sel ? PALETTE.accent : "rgba(255,255,255,0.08)";
+      ctx.lineWidth = sel ? 2 : 1;
+      roundRect(ctx, x, y + 4, cw, ch, 10);
+      ctx.stroke();
+
+      ctx.textAlign = "left";
+      ctx.fillStyle = sel ? PALETTE.accent : PALETTE.text;
+      ctx.font = "700 13px system-ui, sans-serif";
+      ctx.fillText((sel ? "● " : "") + d.name, x + 12, y + 22);
+      ctx.fillStyle = PALETTE.textFaint;
+      ctx.font = "11px system-ui, sans-serif";
+      ctx.fillText(
+        d.tag + "  ·  budget ×" + d.budgetMul + "  ·  speed ×" + d.speedMul,
+        x + 12,
+        y + 38
+      );
+      x += cw + gap;
+    }
+    ctx.textAlign = "center";
   }
 
   // A row of level chips: locked ones are dimmed and unclickable; unlocked ones
