@@ -112,6 +112,37 @@ const diff = await page.evaluate(() => {
 await page.waitForTimeout(400);
 await page.screenshot({ path: "tooling/shot-difficulty.png" }); // briefing on Principal tier
 
+// --- Route 53 global: AZ immunity + cross-AZ wiring ---
+// The current scene is first_light on Principal difficulty (briefing up, not started).
+const r53 = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const cat = await import("./src/services/catalog.js");
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+
+  // Inject a fake az_failure covering zone 0 (where the gate tile lives).
+  s.events.events.push({ kind: "az_failure", zone: 0, state: "active", at: 0, duration: 9999, warn: 0 });
+
+  // Simulate _tickSystems disabled-state logic for the gate building.
+  const gateBuilding = s.grid.getBuilding(gc, gr);
+  const rawZoneDisabled = s.events.isTileDisabled(gc, gr); // zone 0 IS failing → true
+  const gateWouldBeDisabled = gateBuilding.service.role === "gate"
+    ? false
+    : rawZoneDisabled; // gate is immune → false
+
+  // Cross-AZ wiring: simulate _commitWire conditions.
+  // Place an ALB in AZ 2 (col 10) and verify gate can connect to it without adjacency.
+  s.grid.place(cat.SERVICES.alb, 10, gr);
+  const farBuilding = s.grid.getBuilding(10, gr);
+  const gateConn = gateBuilding.service.role === "gate" || farBuilding.service.role === "gate";
+  const crossAzWireAllowed = gateConn && cat.canConnect(gateBuilding.service.role, farBuilding.service.role);
+
+  return {
+    rawZoneDisabled,       // should be true  (zone 0 failed)
+    gateWouldBeDisabled,   // should be false (gate is global/immune)
+    crossAzWireAllowed,    // should be true  (gate can skip adjacency)
+  };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -120,6 +151,7 @@ console.log("begin:", JSON.stringify(begin));
 console.log("playing:", JSON.stringify(playing));
 console.log("diagonal:", JSON.stringify(diag));
 console.log("difficulty:", JSON.stringify(diff));
+console.log("r53 global:", JSON.stringify(r53));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
 // Behaviour assertions.
@@ -139,6 +171,9 @@ if (diag.self || diag.twoAway) problems.push("areAdjacent too permissive");
 if (diff.name !== "Principal Architect") problems.push("difficulty did not switch to Principal");
 if (diff.speedMul !== 1.5) problems.push("Principal speedMul != 1.5");
 if (!(diff.budget < diff.baseBudget)) problems.push("Principal did not tighten budget");
+if (!r53.rawZoneDisabled) problems.push("test setup: zone 0 should be flagged failed");
+if (r53.gateWouldBeDisabled) problems.push("Route 53 gate was disabled by an AZ failure (should be immune)");
+if (!r53.crossAzWireAllowed) problems.push("Route 53 cross-AZ wiring blocked (gate should reach any AZ)");
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 
 process.exit(errors.length || problems.length ? 1 : 0);

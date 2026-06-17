@@ -303,7 +303,8 @@ export class LevelScene extends Scene {
     // route must be recomputed (and in-flight packets on broken paths dropped).
     let changed = false;
     for (const b of this.grid.buildings.values()) {
-      const off = this.events.isTileDisabled(b.col, b.row);
+      // Route 53 is a global managed service — never disabled by an AZ failure.
+      const off = b.service.role === ROLE.GATE ? false : this.events.isTileDisabled(b.col, b.row);
       if (off !== b.disabled) {
         b.disabled = off;
         changed = true;
@@ -331,8 +332,11 @@ export class LevelScene extends Scene {
   }
 
   // True if the tile at this "c,r" key is currently disabled (offline).
+  // Route 53 (gate role) is a global managed service — immune to AZ failures.
   _isKeyDisabled(key) {
     const [c, r] = Grid.parseKey(key);
+    const b = this.grid.getBuilding(c, r);
+    if (b && b.service.role === ROLE.GATE) return false;
     return this.events.isTileDisabled(c, r);
   }
 
@@ -474,16 +478,20 @@ export class LevelScene extends Scene {
   }
 
   // Commit a wire from this.wireFrom to the tile under the cursor, if legal.
+  // Route 53 (gate) is a global service and can register endpoints in any AZ —
+  // adjacency is not required when one end is the gate.
   _commitWire(toTile) {
     const from = this.wireFrom;
     if (!from || !toTile) return;
     if (from.col === toTile.col && from.row === toTile.row) return;
-    if (!Grid.areAdjacent(from.col, from.row, toTile.col, toTile.row)) return;
 
     const a = this.grid.getBuilding(from.col, from.row);
     const b = this.grid.getBuilding(toTile.col, toTile.row);
     if (!a || !b) return;
     if (!canConnect(a.service.role, b.service.role)) return;
+
+    const gateConn = a.service.role === ROLE.GATE || b.service.role === ROLE.GATE;
+    if (!gateConn && !Grid.areAdjacent(from.col, from.row, toTile.col, toTile.row)) return;
 
     const aKey = Grid.key(from.col, from.row);
     const bKey = Grid.key(toTile.col, toTile.row);
@@ -690,15 +698,16 @@ export class LevelScene extends Scene {
       if (this.hoverTile) {
         const a = this.grid.getBuilding(this.wireFrom.col, this.wireFrom.row);
         const b = this.grid.getBuilding(this.hoverTile.col, this.hoverTile.row);
+        const gateConn = (a && a.service.role === ROLE.GATE) || (b && b.service.role === ROLE.GATE);
         valid =
           a &&
           b &&
-          Grid.areAdjacent(
+          (gateConn || Grid.areAdjacent(
             this.wireFrom.col,
             this.wireFrom.row,
             this.hoverTile.col,
             this.hoverTile.row
-          ) &&
+          )) &&
           canConnect(a.service.role, b.service.role);
       }
       drawPendingWire(
@@ -1016,7 +1025,7 @@ export class LevelScene extends Scene {
       ["💰", "AWS bill", "Buildings and data transfer burn your budget over time (top-left). Don't let it hit $0."],
       ["📈", "Waves", "Traffic ramps up in phases (top-right). Add capacity before the peaks arrive."],
       ["🔥", "Overload", "A building past its throughput queues up — latency climbs, then it drops guests. Watch the hot tiles."],
-      ["🗺️", "Zones", "The board spans AZ bands (us-rk-1a/b/c). A zone can fail and disable its tiles — spread compute & DBs across zones."],
+      ["🗺️", "Zones", "The board spans AZ bands (us-rk-1a/b/c). A zone can fail and disable its tiles — spread compute & DBs across zones. Route 53 is a global service: it's immune to AZ failures and can wire directly to endpoints in any zone."],
       ["⭐", "Score", "Stars reward uptime, cost-efficiency, and resilience. Win to unlock the next level."],
     ];
     const rowH = 48;

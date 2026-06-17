@@ -98,7 +98,7 @@ export const LEVELS = {
     ],
     slaMaxDropRate: 0.32,
     intro:
-      "The park spans three Availability Zones (column bands). Mid-shift, a zone goes DARK — every building there is disabled and routes through it break. Design for resilience: spread compute and a second database across zones so traffic reroutes. Then a cost audit inflates your bill. Route 90 to win.",
+      "The park spans three Availability Zones (column bands). Mid-shift, a zone goes DARK — every building there is disabled and routes through it break.\n\nRoute 53 is a GLOBAL service: it stays online even when a zone fails, and you can wire it directly to ALBs or compute in any AZ — no need to chain through an intermediate zone.\n\nDesign for resilience: wire Route 53 to endpoints across all zones, spread compute and a second database across AZs so traffic reroutes automatically. Then a cost audit inflates your bill. Route 90 to win.",
   },
 };
 

@@ -37,7 +37,7 @@ export const SERVICES = {
     latency: 1,
     placeable: false,
     blurb:
-      "Route 53 — DNS front gate. Guests (requests) enter and must exit here for a complete round-trip.",
+      "Route 53 — global DNS front gate. Immune to AZ failures. Wire directly to endpoints in any Availability Zone — drag a wire from here to any ALB or compute tile across the grid.",
   },
 
   alb: {
