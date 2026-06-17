@@ -113,10 +113,13 @@ export function drawService(ctx, service, cx, cy, opts = {}) {
   roundRect(ctx, x, y, size, size, 14);
   ctx.stroke();
 
-  // Emoji "face plate" badge lower-center.
+  // Emoji "face plate" badge lower-center. Set an explicit fill so plain TEXT
+  // glyphs (e.g. Lambda's "λ") are visible — color emoji ignore fillStyle, but a
+  // text glyph would otherwise inherit the faint panel-strip color and vanish.
   ctx.font = `${Math.round(size * 0.3)}px system-ui, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.fillStyle = darken(service.color, 0.55);
   ctx.fillText(service.emoji, cx, y + size * 0.72);
 
   // Two googly eyes near the top — the signature look.
