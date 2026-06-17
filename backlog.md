@@ -445,9 +445,16 @@ the data-driven catalog/levels pattern):
   Headless asserts curve shape (peak≫trough, growth over 10 days, weekend<weekday) + a
   sandbox run where a later full-day window outpaces an early one. headless 0; smoke 0/0.
   → `waves/demand.js`, `sim/simulation.js`, `scenes/levelScene.js`, `levels/levels.js`, `tooling/headless.mjs`.
-- **R4 — `Economy` ledger (`economy/economy.js`)** — move budget/revenue/lost +
-  all mutation behind explicit ops (`chargeBill/earn/penalize/reinvest/applyGrowth/
-  churn`); concentrates the scattered writes; home for compounding growth + churn. → **T7.2**
+- **R4 — `Economy` ledger (`economy/economy.js`). ✅ DONE (2026-06-17).** New `Economy`
+  owns budget/revenue/lost behind named ops (`canAfford/spend/credit/chargeBill/
+  chargeTransfer/earn(reward,reinvestRate)/penalize`) with one invariant set: the budget
+  never goes negative, credits only add, revenue/lost are monotonic. The five scattered
+  inline money mutations (running bill, per-hop transfer, request reward, drop penalty,
+  build/erase) now all route through it — sim flows + scene build/erase. `sim.budget/
+  revenue/lost` delegate to the ledger so renderer/HUD/win-eval are untouched. Pure lift:
+  first_light replays byte-identical. Headless asserts the ledger invariants + that a
+  composed run never drives budget < 0. Growth/churn hang off this ledger next (T7.2 cont.).
+  → `economy/economy.js`, `sim/simulation.js`, `scenes/levelScene.js`, `tooling/headless.mjs`. headless 0; smoke 0/0.
 - **R5 — `IncidentDeck`** — replace the scripted `EventDirector` timeline with a
   seeded, weighted, telegraphed, escalating draw (cooldowns), **keeping** the existing
   query interface (`isTileDisabled/spawnMultiplier/billMultiplier/banner`) so levels +
@@ -464,7 +471,7 @@ the data-driven catalog/levels pattern):
   "free-run" company** mode (run until bankruptcy/quit, scored by peak). Player picks
   per mission. Shapes R6 (`mode: scenario|freerun`, milestone-or-peak `evaluate`).
 
-**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → **(R4, R5 — next)** → R6; T7.6 realism (latency SLOs,
+**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → ~~R4~~ ✅ → **(R5 — next)** → R6; T7.6 realism (latency SLOs,
 scaling-lag/warm-up in `LoadModel`, blast radius via the deck, RPO/RTO) rides on the
 stable seams. **Single best first step: R2.** Each step lands runnable + smoke-checked,
 and steps 3–6 each ship ≥1 headless balancing assertion.
@@ -473,12 +480,12 @@ and steps 3–6 each ship ≥1 headless balancing assertion.
 > — demand breathes, money compounds, and the unexpected tests the architecture.
 
 **Polish / icebox (visual, not blocking the R-series):**
-- **Title-screen living backdrop.** Replace the current floating points with a faded,
-  opaque **mini-architecture** behind the title: real AWS service node icons connected by
-  the game's typed network/edge wires (VPC / Peering / TGW / PrivateLink, each styled as
-  in-game), with packets flowing along the wires and nodes gently bobbing — the title
-  screen previews the actual game world. Reuse `render/sprites.js` node art + the wire
-  renderer at low alpha; a tiny ambient packet loop (no sim, pure decoration). _(requested 2026-06-17)_
+- ✅ **Title-screen living backdrop. DONE (2026-06-17).** Replaced the floating sparks with
+  a faded mini-architecture behind the title: real service nodes (in-game `drawService`
+  art) scattered around the periphery, joined by typed wires showcasing all four
+  connection types (VPC/Peering/TGW/PrivateLink, each in its CONN color), packets flowing
+  along the wires, nodes bobbing. Pure decoration (packet positions from the scene clock,
+  no sim); nodes hug the edges so the centred title + buttons stay legible. → `titleScene.js`.
 
 ### 🟣 PHASE 8 — Grand pivot: fork into a visual AWS SDK client
 

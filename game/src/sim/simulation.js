@@ -25,6 +25,7 @@ import { Packet } from "../entities/packet.js";
 import { getConn } from "../services/connections.js";
 import { SINK_ROLES, ROLE } from "../services/catalog.js";
 import { BillMeter, BILL } from "../economy/billing.js";
+import { Economy } from "../economy/economy.js";
 import { WaveScheduler } from "../waves/scheduler.js";
 import { DemandModel } from "../waves/demand.js";
 import { LoadModel } from "../waves/load.js";
@@ -41,10 +42,9 @@ export class Simulation {
     this.gateKeys = gateKeys;
     this._rng = rng;
 
-    // Economy / counters.
-    this.budget = budget;
-    this.revenue = 0;
-    this.lost = 0;
+    // Economy ledger (R4) owns budget/revenue/lost behind named ops; success/
+    // failed are request counters the win evaluation reads, so they stay here.
+    this.economy = new Economy(budget);
     this.success = 0;
     this.failed = 0;
 
@@ -85,6 +85,13 @@ export class Simulation {
     // or { kind:'float', x, y, text, good }.
     this.emitted = [];
   }
+
+  // Money lives in the ledger; expose it as fields for the renderer/HUD + the
+  // win evaluation that read `sim.budget/revenue/lost`.
+  get budget() { return this.economy.budget; }
+  set budget(v) { this.economy.budget = v; }
+  get revenue() { return this.economy.revenue; }
+  get lost() { return this.economy.lost; }
 
   emit(e) {
     this.emitted.push(e);
@@ -211,9 +218,7 @@ export class Simulation {
 
     // Draw down the budget by the running bill (transfer is billed per-hop in
     // _updatePackets). Game-over on depletion is handled in _checkOutcome().
-    const spent = this.bill.tick(dt, this.grid);
-    this.budget -= spent;
-    if (this.budget < 0) this.budget = 0;
+    this.economy.chargeBill(this.bill.tick(dt, this.grid));
   }
 
   // True if the tile at this "c,r" key cannot currently carry traffic — either
@@ -428,8 +433,7 @@ export class Simulation {
           }
         }
         this.bill.chargeTransfer(xferMul);
-        this.budget -= BILL.transferPerHop * xferMul * this.bill.auditMul;
-        if (this.budget < 0) this.budget = 0;
+        this.economy.chargeTransfer(BILL.transferPerHop * xferMul * this.bill.auditMul);
 
         // ---- T2.2: an overloaded building sheds the request crossing it. ----
         if (b && this.loadModel.shouldDrop(this.grid, key)) {
@@ -444,18 +448,16 @@ export class Simulation {
         // actually experienced (a snappy round-trip pays more than a sluggish
         // one). Latency comes from the sink building's live queue state. ----
         const reward = this._rewardFor(p);
-        this.revenue += reward;
         this.success++;
-        // Sandbox: reinvest a configurable fraction of revenue back into budget.
-        if (!this.level.goalRequests && this._reinvestRate > 0) {
-          const reinvested = Math.round(reward * this._reinvestRate);
-          if (reinvested > 0) this.budget += reinvested;
-        }
+        // Book revenue; in sandbox/company mode reinvest a configurable fraction
+        // of it straight back into the budget.
+        const reinvest = this.level.goalRequests ? 0 : this._reinvestRate;
+        this.economy.earn(reward, reinvest);
         this.emit({ kind: "float", x: p.x, y: p.y, text: "+$" + reward, good: true });
       } else if (p.status === "dropped") {
         // ---- HOOK: on-drop → lost (an SLA miss costs goodwill/credits). ----
         const penalty = 6;
-        this.lost += penalty;
+        this.economy.penalize(penalty);
         this.failed++;
         this.emit({ kind: "float", x: p.x, y: p.y, text: "drop", good: false });
       } else {

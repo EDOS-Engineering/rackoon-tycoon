@@ -387,13 +387,13 @@ export class LevelScene extends Scene {
     if (this.palette.selected) {
       const svc = SERVICES[this.palette.selected];
       if (input.leftDown && t && !this.grid.hasBuilding(t.col, t.row)) {
-        if (svc.cost <= this.budget) {
+        if (this.sim.economy.canAfford(svc.cost)) {
           this.grid.place(svc, t.col, t.row);
-          this.budget -= svc.cost;
+          this.sim.economy.spend(svc.cost);
           this._routeDirty = true;
           audio.play("place");
           this._spawnParticles(t.col * TILE + TILE / 2, t.row * TILE + TILE / 2, svc.color);
-          if (svc.cost > this.budget) this.palette.clearSelection();
+          if (!this.sim.economy.canAfford(svc.cost)) this.palette.clearSelection();
         }
       }
       return;
@@ -405,7 +405,7 @@ export class LevelScene extends Scene {
         const b = this.grid.getBuilding(t.col, t.row);
         if (b && b.service.role !== "gate") {
           this.grid.remove(t.col, t.row);
-          this.budget += b.service.cost; // refund
+          this.sim.economy.credit(b.service.cost); // refund
           this._routeDirty = true;
           audio.play("erase");
           this.sim._dropPacketsOnBrokenPaths();

@@ -15,6 +15,7 @@ import { Grid } from "../game/src/grid/grid.js";
 import { SERVICES } from "../game/src/services/catalog.js";
 import { Simulation } from "../game/src/sim/simulation.js";
 import { DemandModel } from "../game/src/waves/demand.js";
+import { Economy } from "../game/src/economy/economy.js";
 import { getLevel } from "../game/src/levels/levels.js";
 
 const problems = [];
@@ -178,6 +179,25 @@ const sbB = runWindow(2024);
 if (!(sbA.sim.success > 0)) problems.push("sandbox demand run should route guests");
 if (sbA.sim.success !== sbB.sim.success) problems.push("sandbox demand run must be deterministic for a fixed seed");
 if (!(sbA.lateRouted > sbA.earlyRouted)) problems.push("demand growth: a later window should route more guests than an early one");
+
+// 7. Economy ledger (Phase 7 R4): every money mutation goes through named ops
+//    with one invariant — the budget never goes negative, credits only add, and
+//    revenue/lost are monotonic running totals.
+const eco = new Economy(100);
+eco.spend(30);                          // 100 → 70
+const overcharged = eco.spend(999);     // can't overdraw: charges 70, lands at 0
+if (eco.budget !== 0) problems.push("economy: an overdraw should clamp the budget at $0");
+if (overcharged !== 70) problems.push("economy: spend() should return the amount actually charged");
+eco.credit(50);                         // refund → 50
+if (eco.budget !== 50) problems.push("economy: credit() should add to the budget");
+eco.earn(20);                           // revenue 20, no reinvest (budget stays 50)
+if (!(eco.revenue === 20 && eco.budget === 50)) problems.push("economy: earn() with no reinvest should not touch the budget");
+eco.earn(20, 0.5);                      // revenue 40, reinvest 10 → budget 60
+if (!(eco.revenue === 40 && eco.budget === 60)) problems.push("economy: earn() should reinvest the configured fraction");
+eco.penalize(6);
+if (eco.lost !== 6) problems.push("economy: penalize() should accumulate lost");
+if (!eco.canAfford(60) || eco.canAfford(61)) problems.push("economy: canAfford() boundary wrong");
+if (simA.budget < 0 || sbA.sim.budget < 0) problems.push("economy: a composed sim run should never drive the budget below $0");
 
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
