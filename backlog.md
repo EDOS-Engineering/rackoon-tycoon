@@ -3,12 +3,13 @@
 > **Build your cloud empire. Tame the traffic.**
 > AWS SAA-C03 study guide reborn as a browser game. **Factorio meets RollerCoaster Tycoon.**
 
-**Status:** Phase 4 🚧 **in progress.** Phase 3 ✅ complete: difficulty tiers, diagonal connections, R53 global model, 18-service catalog with category-tab palette, 4 gap-mapped boss levels. Phase 4: audio (Web Audio API), exam tips on all services + levels, sandbox mode, particle FX + packet trail. Stack: zero-dep vanilla.
+**Status:** Phase 4 ✅ **complete.** Pre-Phase-5 fixes ✅ committed (`8718105`): AZ randomization, level win requirements, sandbox reinvestment slider. Phase 5 🔵 queued: typed connections. Stack: zero-dep vanilla.
 
 ## Progress log
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
 - **2026-06-16 — Phase 2 shipped + tuned.** Added `economy/billing.js` + `economy/scoring.js`, `waves/{scheduler,load,events}.js`, `save/progress.js`; wired through `levelScene`, `resultsScene`, `titleScene`, `hud`, `levels`. Win/lose, 3-pillar star scoring, persistence/unlocks, campaign level-select, 3 levels (First Light / Rush Hour / When the Zone Goes Dark). **Post-playtest polish:** gentler bill (`rateDivisor` 60→130, transfer 0.04→0.015) + bigger budgets + ~25–30% slower spawn/wave rates; the round now stays paused on a **briefing** until the player clicks *Begin* (read + pre-build calmly); persistent 🎯 objective chip + an **H** help legend for clarity. Upgraded `tooling/smoke.mjs` asserts: briefing pauses the sim, a legal route flows guests, and the bill draws the budget down without bankrupting a sensible build.
-- **2026-06-16 — Phase 4 started (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 7 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
+- **2026-06-16 — Phase 4 complete (Sprint 4a–4d).** Audio: 8 procedural Web Audio sounds (place, wire, erase, spike, azFail, alert, win, lose). Exam tips on all 19 services + 8 levels (palette tooltip + grid tooltip + results screen). Sandbox mode (no win condition, 9999 budget) + title button. Particle burst on building placement; packet motion trail (3-step position history). → `engine/audio.js` (new), `catalog.js`, `levels.js`, `palette.js`, `levelScene.js`, `resultsScene.js`, `titleScene.js`, `packet.js`, `sprites.js`
+- **2026-06-17 — Pre-Phase-5 fixes committed (`8718105`).** (1) AZ failure zones now randomized per-run across all 3 AZs — EventDirector assigns distinct random zones to events with no explicit zone; (2) Four boss levels enforce specific win requirements via `winRequires` spec: leaky_pipe→S3-via-VPC-Endpoint, raccoons_gate→WAF/Shield, replay_or_gone→Kinesis Streams, single_writer→Aurora SV2/Limitless; generic ALB→EC2→RDS can no longer beat specialized challenges; (3) Sandbox reinvestment slider (0–100%, 10% snaps) at top-right feeds revenue back into AWS budget for perpetual profitable play. smoke.mjs: 0 errors, 0 problems.
 - **2026-06-16 — Phase 3 started (Sprint 3a).** Difficulty tiers (Architect base / Senior / Principal): each tightens budget (×1 / ×0.8 / ×0.65) and speeds the whole round (×1 / ×1.25 / ×1.5); selectable + persisted on the title screen, applied per level. Diagonal (8-neighbour) grid connections for wiring + routing (renderer + packet motion were already generic). Headless-verified: title difficulty selector, Principal briefing (budget $975), and a fully diagonal route flowing guests. → `save/difficulty.js`, `grid.js`, `scenes/titleScene.js`, `scenes/levelScene.js`.
 
 ---
@@ -145,7 +146,7 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 > **End of Phase 3:** difficulty + diagonal/typed connections + a broader AWS
 > catalog + the gap-mapped boss levels. Each sub-sprint commits independently.
 
-### 🟠 PHASE 4 — Polish (Sprint 4)
+### ✅ PHASE 4 — Polish (Sprint 4) — COMPLETE
 
 **Sprint 4 — Juice & ship**
 - [x] T4.1 Particle burst on building placement + packet motion trail. → `levelScene.js`, `packet.js`, `sprites.js`
