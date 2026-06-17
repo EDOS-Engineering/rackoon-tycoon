@@ -361,7 +361,7 @@ export const LEVELS = {
       { id: "nat_gateway", col: 8, row: 6 },
     ],
     goalRequests: 65,
-    next: null, // end of the campaign chain (for now)
+    next: "cache_rules",
     waves: [
       { name: "Warm-up",      duration: 18, rate: 0.9 },
       { name: "Content rush",  duration: 28, rate: 1.6 },
@@ -384,6 +384,88 @@ export const LEVELS = {
       "Your S3 bucket holds private content. Exposing it publicly is a breach waiting to happen — and routing through the NAT Gateway is expensive and still public.\n\nThe pattern: keep the bucket private and serve it only through CloudFront with Origin Access Control (OAC). CloudFront caches at the edge (cheap, fast) and is the single, controlled door to the bucket.\n\nWire the route through CloudFront to S3. Keep the NAT Gateway out of the path.\n\n⚠ WIN CONDITION: reach S3 via CloudFront, with no NAT/public hop.\n\nRoute 65 to win.",
     examTip:
       "CloudFront + OAC (Origin Access Control) locks an S3 bucket to CloudFront-only access — the bucket stays private, no public reads. Enforce encryption at rest (SSE-S3/SSE-KMS) and block public access. Signed URLs/cookies gate private content. This cuts origin load and egress cost too.",
+  },
+
+  // T6.7 — Domain: High-Performing. Cut database load + latency with a cache
+  // layer in front of the DB.
+  cache_rules: {
+    id: "cache_rules",
+    name: "Cache Rules",
+    subtitle: "Stop hammering the database — cache the hot reads",
+    cols: 16,
+    rows: 9,
+    budget: 2800,
+    spawnRate: 1.05,
+    gates: [{ col: 1, row: 4 }],
+    // A single RDS is seeded and will buckle under read load. The fix is a cache
+    // (ElastiCache) or CDN (CloudFront) in front to absorb the hot reads.
+    seed: [
+      { id: "rds", col: 12, row: 4 },
+    ],
+    goalRequests: 80,
+    next: "read_heavy",
+    waves: [
+      { name: "Warm-up",       duration: 16, rate: 0.9 },
+      { name: "Read storm",    duration: 26, rate: 1.8 },
+      { name: "Hot-key peak",  duration: 30, rate: 2.6 },
+      { name: "Sustained",     duration: 20, rate: 2.1 },
+    ],
+    events: [
+      { at: 30, kind: "traffic_spike", duration: 14, warn: 6, magnitude: 2.2 },
+      { at: 62, kind: "traffic_spike", duration: 12, warn: 6, magnitude: 1.9 },
+    ],
+    slaMaxDropRate: 0.28,
+    // Win requires a cache or CDN in the route ahead of the database.
+    winRequires: {
+      sinkIs: ["rds", "rds_multiaz", "dynamodb", "aurora_sv2"],
+      pathContainsAny: ["cache", "cloudfront"],
+      requirementHint: "Put an ElastiCache or CloudFront layer in the route in front of the database to absorb the read storm",
+    },
+    intro:
+      "A single database is about to be buried under a read storm. Scaling the DB itself is expensive and slow — most of these reads are the same hot data.\n\nPut a cache in front: ElastiCache (in-memory, sub-millisecond) for application reads, or CloudFront (edge cache) for cacheable content. The cache absorbs repeat reads so only misses hit the DB — lower latency, far less DB load, lower cost.\n\nWire a cache (Net tab) or CloudFront into the route ahead of the database.\n\n⚠ WIN CONDITION: an ElastiCache or CloudFront layer sits in the route in front of the DB.\n\nRoute 80 to win.",
+    examTip:
+      "ElastiCache (Redis/Memcached) offloads hot reads from RDS/Aurora; Redis adds persistence, pub/sub, sorted sets. DynamoDB's matching cache is DAX. CloudFront caches at the edge for cacheable HTTP. Caching is the cheapest way to cut read latency and database load on SAA-C03.",
+  },
+
+  // T6.8 — Domain: High-Performing. Scale a read-mostly workload with RDS Read
+  // Replicas (read scaling) rather than a bigger single writer.
+  read_heavy: {
+    id: "read_heavy",
+    name: "Read Heavy",
+    subtitle: "90% reads — scale them out, don't scale up",
+    cols: 16,
+    rows: 9,
+    budget: 3000,
+    spawnRate: 1.0,
+    gates: [{ col: 1, row: 4 }],
+    // The write primary is seeded. The player adds Read Replica(s) to serve the
+    // read traffic. (A replica is structurally invalid without this primary.)
+    seed: [
+      { id: "rds", col: 8, row: 6 },
+    ],
+    goalRequests: 80,
+    next: null, // end of the campaign chain (for now)
+    waves: [
+      { name: "Warm-up",        duration: 16, rate: 0.9 },
+      { name: "Read growth",    duration: 26, rate: 1.7 },
+      { name: "Report peak",    duration: 30, rate: 2.5 },
+      { name: "Sustained",      duration: 20, rate: 2.0 },
+    ],
+    events: [
+      { at: 34, kind: "traffic_spike", duration: 14, warn: 6, magnitude: 2.0 },
+      { at: 66, kind: "cost_audit",    duration: 12, warn: 5, magnitude: 1.4 },
+    ],
+    slaMaxDropRate: 0.28,
+    // Win requires the route to serve reads from an RDS Read Replica (which itself
+    // requires the seeded primary on the board — see the dependency model).
+    winRequires: {
+      sinkIs: ["rds_replica"],
+      requirementHint: "Add an RDS Read Replica (DB tab) and route reads to it — it offloads the write primary. The primary must stay on the board (a replica can't exist alone).",
+    },
+    intro:
+      "This workload is ~90% reads. The write primary is already on the board, but it can't serve all these reads alone — and scaling the writer up is the wrong (and pricey) answer.\n\nAdd an RDS Read Replica: an asynchronous read-only copy that offloads reads from the primary. Add more replicas to scale reads horizontally. (Multi-AZ is for failover, NOT read scaling — different tool.)\n\nA Read Replica needs its source primary present — the seeded RDS. Place a Read Replica (DB tab) and route the read traffic to it.\n\n⚠ WIN CONDITION: reads are served by an RDS Read Replica.\n\nRoute 80 to win.",
+    examTip:
+      "RDS Read Replicas = asynchronous, readable, scale READS (up to 15 for Aurora, 5 for RDS); promotable for DR. Multi-AZ = synchronous standby, NOT readable, for HA/failover. SAA tell: 'scale read traffic' → Read Replica; 'high availability / automatic failover' → Multi-AZ.",
   },
 
   // ---- Sandbox (not in LEVEL_ORDER — accessed via dedicated title button) ----
@@ -421,6 +503,8 @@ export const LEVEL_ORDER = [
   "mesh_bridge",
   "private_lines",
   "locked_buckets",
+  "cache_rules",
+  "read_heavy",
 ];
 
 export const FIRST_LEVEL = "first_light";

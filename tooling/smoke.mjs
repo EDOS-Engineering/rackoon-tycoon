@@ -167,11 +167,13 @@ const levels3c = await page.evaluate(async () => {
   const mb = m.LEVELS.mesh_bridge;
   const pvl = m.LEVELS.private_lines;
   const lck = m.LEVELS.locked_buckets;
+  const cr = m.LEVELS.cache_rules;
+  const rh = m.LEVELS.read_heavy;
   return {
     levelCount: m.LEVEL_ORDER.length,
     leakyExists: !!lp,
     leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
-    lastIsLocked: m.LEVEL_ORDER.at(-1) === "locked_buckets",
+    lastIsReadHeavy: m.LEVEL_ORDER.at(-1) === "read_heavy",
     singleWriterNext: m.LEVELS.single_writer?.next === "mesh_bridge",
     meshNeedsTgw: (mb?.winRequires?.edgeTypeAny || []).includes("tgw"),
     // Phase 6 Secure sprint.
@@ -179,6 +181,11 @@ const levels3c = await page.evaluate(async () => {
     privateExcludesNat: (pvl?.winRequires?.pathExcludes || []).includes("nat_gateway"),
     lockedNeedsCloudfront: (lck?.winRequires?.pathContainsAll || []).includes("cloudfront"),
     lockedExcludesNat: (lck?.winRequires?.pathExcludes || []).includes("nat_gateway"),
+    // Phase 6 High-Performing sprint.
+    lockedNextCache: lck?.next === "cache_rules",
+    cacheNeedsCacheLayer: (cr?.winRequires?.pathContainsAny || []).some((id) => ["cache", "cloudfront"].includes(id)),
+    readHeavySinkReplica: (rh?.winRequires?.sinkIs || []).includes("rds_replica"),
+    readHeavySeedsPrimary: rh?.seed?.some((s) => s.id === "rds"),
   };
 });
 
@@ -479,6 +486,47 @@ const secureWin = await page.evaluate(async () => {
   return { natBlocked, plinkOk };
 });
 
+// Phase 6 High-Performing (T6.7 cache_rules): a direct DB route is blocked; a
+// route through a cache layer wins. Uses the seeded RDS.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "cache_rules" }));
+await page.waitForTimeout(300);
+const cacheWin = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  // Seeded RDS at (12,4). Direct compute -> DB, no cache.
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(12, 4), "vpc");
+  const noCacheBlocked = !s._checkWinRequires().ok;
+  // Insert a cache between compute and the DB.
+  s.grid.removeEdge(gc + 1, gr, 12, 4);
+  s.grid.place(S.cache, gc + 2, gr);
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  s.grid.addEdge(K(gc + 2, gr), K(12, 4), "vpc");
+  const cacheOk = s._checkWinRequires().ok;
+  return { noCacheBlocked, cacheOk };
+});
+
+// Phase 6 (T6.8 read_heavy): the win needs a Read Replica sink, which itself
+// needs the seeded primary on the board (dependency model).
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "read_heavy" }));
+await page.waitForTimeout(300);
+const readWin = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  const S = (await import("./src/services/catalog.js")).SERVICES;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const K = (c, r) => c + "," + r;
+  // Seeded primary RDS at (8,6). Route reads to a Read Replica.
+  s.grid.place(S.ec2, gc + 1, gr);
+  s.grid.place(S.rds_replica, gc + 2, gr);
+  s.grid.addEdge(K(gc, gr), K(gc + 1, gr), "vpc");
+  s.grid.addEdge(K(gc + 1, gr), K(gc + 2, gr), "vpc");
+  const replicaOk = s._checkWinRequires().ok; // replica valid (primary seeded) + is the sink
+  return { replicaOk };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -501,6 +549,8 @@ console.log("sceneConn:", JSON.stringify(sceneConn));
 console.log("edgeWinReq:", JSON.stringify(edgeWinReq));
 console.log("transitive5b:", JSON.stringify(transitive5b));
 console.log("secureWin:", JSON.stringify(secureWin));
+console.log("cacheWin:", JSON.stringify(cacheWin));
+console.log("readWin:", JSON.stringify(readWin));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -532,16 +582,20 @@ if (!catalog3b.rdsMAZResilient)        problems.push("RDS Multi-AZ azResilient s
 if (!catalog3b.aurSV2AutoScale)        problems.push("Aurora SV2 autoScale should be true");
 if (!catalog3b.streamsReplayable)      problems.push("Kinesis Streams replayable should be true");
 if (catalog3b.groupCount !== 5)        problems.push("PALETTE_GROUPS should have 5 groups");
-if (levels3c.levelCount !== 10)     problems.push("LEVEL_ORDER should have 10 levels (incl. Phase 6 Secure sprint)");
+if (levels3c.levelCount !== 12)     problems.push("LEVEL_ORDER should have 12 levels (incl. Phase 6 Secure + High-Perf sprints)");
 if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
 if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
-if (!levels3c.lastIsLocked)         problems.push("locked_buckets should be the last level");
+if (!levels3c.lastIsReadHeavy)      problems.push("read_heavy should be the last level");
 if (!levels3c.singleWriterNext)     problems.push("single_writer.next should chain to mesh_bridge");
 if (!levels3c.meshNeedsTgw)         problems.push("mesh_bridge winRequires should demand a TGW edge");
 if (!levels3c.privateNeedsPlink)    problems.push("private_lines should require a PrivateLink edge");
 if (!levels3c.privateExcludesNat)   problems.push("private_lines should exclude nat_gateway from the route");
 if (!levels3c.lockedNeedsCloudfront) problems.push("locked_buckets should require CloudFront in the route");
 if (!levels3c.lockedExcludesNat)    problems.push("locked_buckets should exclude nat_gateway from the route");
+if (!levels3c.lockedNextCache)      problems.push("locked_buckets.next should chain to cache_rules");
+if (!levels3c.cacheNeedsCacheLayer) problems.push("cache_rules should require a cache/CloudFront layer");
+if (!levels3c.readHeavySinkReplica) problems.push("read_heavy should require an rds_replica sink");
+if (!levels3c.readHeavySeedsPrimary) problems.push("read_heavy should seed an RDS primary for the replica");
 // Pre-Phase-5 fix assertions.
 if (azFix.distinctZones < 2)        problems.push("AZ failure zone not randomized — all " + azFix.distinctZones + " trials hit same zone");
 if (!winReq.leakyHasReq)            problems.push("leaky_pipe missing winRequires");
@@ -598,6 +652,9 @@ if (!transitive5b.okViaTgw)         problems.push("5b: a transitive TGW hop shou
 if (!transitive5b.singlePeeringRoundTrip) problems.push("5b: a single peering hop to a sink should still round-trip");
 if (!secureWin.natBlocked)          problems.push("private_lines: a NAT/public route should NOT win");
 if (!secureWin.plinkOk)             problems.push("private_lines: a PrivateLink route should win");
+if (!cacheWin.noCacheBlocked)       problems.push("cache_rules: a direct DB route (no cache) should NOT win");
+if (!cacheWin.cacheOk)              problems.push("cache_rules: a route through a cache layer should win");
+if (!readWin.replicaOk)             problems.push("read_heavy: a Read Replica route (with seeded primary) should win");
 
 console.log("phase4:", JSON.stringify(phase4));
 
