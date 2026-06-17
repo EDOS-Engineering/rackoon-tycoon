@@ -164,15 +164,25 @@ export class Simulation {
       const baseMul = this.demand ? this.demand.rateAt(this.simTime) : this.waves.multiplier();
       const rate = this.level.spawnRate * baseMul * spikeMul;
       this._spawnAcc += dt * rate;
+      // Sim-depth: during a TLS cert expiry the edge rejects a fraction of NEW
+      // connections (a failed handshake) — they never become a routed packet.
+      const certDrop = this.events.edgeDropRate();
       while (this._spawnAcc >= 1) {
         this._spawnAcc -= 1;
+        if (certDrop > 0 && this._rng() < certDrop) {
+          this.failed++;
+          this.economy.penalize(6);
+          continue;
+        }
         this._spawnPacket();
       }
     } else {
       this._spawnAcc = 0;
     }
 
-    // Per-building load / overload from in-flight demand (T2.2).
+    // Per-building load / overload from in-flight demand (T2.2). A noisy-neighbor
+    // incident derates effective capacity (sim-depth), so tiers saturate sooner.
+    this.loadModel.capacityMul = this.events.capacityMultiplier();
     this.loadModel.measure(this.grid, this.packets);
     this.loadModel.update(this.grid, dt);
 
@@ -224,6 +234,10 @@ export class Simulation {
       else if (b.service.azResilient) off = false;
       else off = this.events.isTileDisabled(b.col, b.row);
       if (b.service.spotInterruptible && spotDown) off = true;
+      // Sim-depth: a dependency outage downs every tile of the targeted service id
+      // (a shared API/DB/secrets store going dark), regardless of AZ. The global
+      // gate stays up.
+      if (b.service.role !== ROLE.GATE && this.events.isServiceDisabled(b.service.id)) off = true;
       if (off !== b.disabled) {
         b.disabled = off;
         changed = true;
@@ -245,9 +259,9 @@ export class Simulation {
     for (const e of this.events.events) {
       if ((e.state === "warning" || e.state === "active") && !e._sounded) {
         e._sounded = true;
-        if (e.kind === "az_failure" || e.kind === "spot_interruption" || e.kind === "region_failure")
+        if (e.kind === "az_failure" || e.kind === "spot_interruption" || e.kind === "region_failure" || e.kind === "dependency_outage")
           this.emit({ kind: "sound", name: "azFail" });
-        else if (e.kind === "traffic_spike") this.emit({ kind: "sound", name: "spike" });
+        else if (e.kind === "traffic_spike" || e.kind === "viral_spike") this.emit({ kind: "sound", name: "spike" });
         else this.emit({ kind: "sound", name: "alert" });
       }
     }
@@ -275,6 +289,8 @@ export class Simulation {
     const b = this.grid.getBuilding(c, r);
     if (b && !this._dependencyMet(b)) return true;
     if (b && b.service.spotInterruptible && this.events.spotInterrupted()) return true;
+    // Sim-depth: a dependency outage knocks out the targeted service id.
+    if (b && b.service.role !== ROLE.GATE && this.events.isServiceDisabled(b.service.id)) return true;
     // Route 53 (gate) is global and survives AZ + region failures.
     if (b && b.service.role === ROLE.GATE) return false;
     // A region failure downs the whole primary region — Multi-AZ can't save it.

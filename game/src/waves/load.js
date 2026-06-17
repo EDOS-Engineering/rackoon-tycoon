@@ -32,6 +32,9 @@ export class LoadModel {
   constructor(rng = Math.random) {
     this._demand = new Map(); // building key -> concurrent packet count
     this._rng = rng;
+    // Sim-depth: a ≤1 derate on effective capacity from a noisy-neighbor incident
+    // (set by the sim each step). 1 = no contention.
+    this.capacityMul = 1;
   }
 
   reset() {
@@ -90,6 +93,8 @@ export class LoadModel {
       } else {
         cap = baseCap;
       }
+      // Noisy-neighbor contention derates effective capacity (sim-depth).
+      cap = Math.max(1, cap * (this.capacityMul != null ? this.capacityMul : 1));
       const load = demand / cap;
       if (b.load == null) b.load = 0;
 

@@ -30,6 +30,12 @@ export const EVENT_KIND = {
   COST_AUDIT: "cost_audit",
   SPOT_INTERRUPTION: "spot_interruption",
   REGION_FAILURE: "region_failure",
+  // Sim-depth incident kinds (richer "unforeseen circumstances"):
+  VIRAL_SPIKE: "viral_spike", // a huge demand surge (bigger/longer than a traffic spike)
+  DEPENDENCY_OUTAGE: "dependency_outage", // a specific upstream service id goes dark
+  NOISY_NEIGHBOR: "noisy_neighbor", // shared-tenancy contention derates capacity
+  CERT_EXPIRY: "cert_expiry", // TLS at the edge fails a fraction of new connections
+  PRICE_HIKE: "price_hike", // a sustained price increase inflates the bill
 };
 
 // How many AZ bands the grid is divided into.
@@ -168,9 +174,11 @@ export class EventDirector {
     return s;
   }
 
+  // Traffic surge factor — a normal spike, plus a viral spike (bigger by default).
   spawnMultiplier() {
     let m = 1;
     for (const e of this._active(EVENT_KIND.TRAFFIC_SPIKE)) m *= e.magnitude || 1.5;
+    for (const e of this._active(EVENT_KIND.VIRAL_SPIKE)) m *= e.magnitude || 3.0;
     return m;
   }
 
@@ -179,10 +187,41 @@ export class EventDirector {
     return this._active(EVENT_KIND.SPOT_INTERRUPTION).length > 0;
   }
 
+  // Bill inflation — a cost audit, plus a sustained price hike.
   billMultiplier() {
     let m = 1;
     for (const e of this._active(EVENT_KIND.COST_AUDIT)) m *= e.magnitude || 1.5;
+    for (const e of this._active(EVENT_KIND.PRICE_HIKE)) m *= e.magnitude || 1.4;
     return m;
+  }
+
+  // Capacity derate (≤1) from noisy-neighbor contention — multiplies effective
+  // throughput while active, so tiers saturate sooner (latency + SLO take the hit).
+  capacityMultiplier() {
+    let m = 1;
+    for (const e of this._active(EVENT_KIND.NOISY_NEIGHBOR)) m *= e.magnitude != null ? e.magnitude : 0.6;
+    return m;
+  }
+
+  // Fraction of NEW connections the edge rejects during a TLS cert expiry (a
+  // failed handshake). 0 when none active; the strongest active one wins.
+  edgeDropRate() {
+    let r = 0;
+    for (const e of this._active(EVENT_KIND.CERT_EXPIRY)) {
+      const d = e.magnitude != null ? e.magnitude : 0.5;
+      if (d > r) r = d;
+    }
+    return r;
+  }
+
+  // True if a service id is currently knocked out by a dependency outage. A drawn
+  // outage targets a specific service id (`ev.target`) — e.g. a third-party API,
+  // a shared DB, or a secrets store — disabling every tile of that service.
+  isServiceDisabled(serviceId) {
+    for (const e of this._active(EVENT_KIND.DEPENDENCY_OUTAGE)) {
+      if (e.target === serviceId) return true;
+    }
+    return false;
   }
 
   // The most urgent banner to show: a warning counting down, else an active
@@ -240,6 +279,16 @@ function warningText(e, cols) {
       return "⚠ Spot capacity reclamation inbound — Spot instances will be interrupted";
     case EVENT_KIND.REGION_FAILURE:
       return "⚠ Region-wide outage imminent — the entire primary region is going dark";
+    case EVENT_KIND.VIRAL_SPIKE:
+      return "⚠ You're going viral — a massive traffic surge is about to hit";
+    case EVENT_KIND.DEPENDENCY_OUTAGE:
+      return "⚠ Upstream dependency degrading — " + (e.target || "a service") + " may go offline";
+    case EVENT_KIND.NOISY_NEIGHBOR:
+      return "⚠ Noisy-neighbor contention rising — shared capacity about to derate";
+    case EVENT_KIND.CERT_EXPIRY:
+      return "⚠ TLS certificate expiring — new connections will start failing";
+    case EVENT_KIND.PRICE_HIKE:
+      return "⚠ Provider price increase announced — your bill is about to climb";
     default:
       return "⚠ Incident inbound";
   }
@@ -257,6 +306,16 @@ function activeText(e, cols) {
       return "🎰 Spot interruption — Spot instances are OFFLINE";
     case EVENT_KIND.REGION_FAILURE:
       return "🛑 PRIMARY REGION DOWN — only the DR region survives. Route 53, fail over!";
+    case EVENT_KIND.VIRAL_SPIKE:
+      return "🚀 VIRAL! Traffic is exploding — scale or shed load fast";
+    case EVENT_KIND.DEPENDENCY_OUTAGE:
+      return "🔌 Dependency outage — " + (e.target || "a service") + " is DOWN; its tiles are offline";
+    case EVENT_KIND.NOISY_NEIGHBOR:
+      return "📉 Noisy neighbor — shared capacity is derated; tiers saturate sooner";
+    case EVENT_KIND.CERT_EXPIRY:
+      return "🔒 Cert expired — the edge is rejecting a share of new connections";
+    case EVENT_KIND.PRICE_HIKE:
+      return "💸 Price hike active — the running bill is inflated";
     default:
       return "Incident active";
   }

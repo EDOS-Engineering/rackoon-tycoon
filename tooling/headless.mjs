@@ -395,6 +395,43 @@ if (!telDet) problems.push("telemetry: balancing signals must be deterministic f
 // peak demand should exceed the baseline (the curve is doing its job).
 if (!(telA.peakDemand > 1)) problems.push("telemetry: peak demand should rise above baseline over a run");
 
+// 12. Sim-depth incident kinds: each new kind drives its own effect, and a deck
+//     of them runs deterministically through the composed sim.
+function dir(ev) {
+  const d = new EventDirector([{ at: 0, duration: 9999, warn: 0, ...ev }], 18, makeRng(1));
+  d.tick(0.1); // → the event is active
+  return d;
+}
+if (dir({ kind: "viral_spike", magnitude: 3 }).spawnMultiplier() !== 3) problems.push("viral_spike: should drive the spawn multiplier");
+if (dir({ kind: "price_hike", magnitude: 1.5 }).billMultiplier() !== 1.5) problems.push("price_hike: should inflate the bill multiplier");
+if (dir({ kind: "noisy_neighbor", magnitude: 0.6 }).capacityMultiplier() !== 0.6) problems.push("noisy_neighbor: should derate capacity (<1)");
+if (dir({ kind: "cert_expiry", magnitude: 0.4 }).edgeDropRate() !== 0.4) problems.push("cert_expiry: should set an edge drop rate");
+const depDir = dir({ kind: "dependency_outage", target: "rds" });
+if (!(depDir.isServiceDisabled("rds") && !depDir.isServiceDisabled("ec2"))) problems.push("dependency_outage: should disable only the targeted service id");
+// Neutrals when nothing of that kind is active.
+const neutral = new EventDirector([{ at: 999, kind: "az_failure", duration: 1, warn: 0 }], 18, makeRng(1));
+neutral.tick(0.1);
+if (!(neutral.spawnMultiplier() === 1 && neutral.billMultiplier() === 1 && neutral.capacityMultiplier() === 1 && neutral.edgeDropRate() === 0 && !neutral.isServiceDisabled("rds")))
+  problems.push("incident effects should be neutral when no matching event is active");
+
+// A deck made entirely of the new kinds runs through the real sim, deterministically.
+const depthDeck = {
+  firstAt: 4, baseInterval: 6, intervalDecay: 0.9, minInterval: 4, warn: 2, cooldown: 4, maxActive: 3,
+  cards: [
+    { kind: "viral_spike", weight: 1, duration: [5, 7], magnitude: [2.5, 3] },
+    { kind: "noisy_neighbor", weight: 1, duration: [5, 7], magnitude: [0.6, 0.7] },
+    { kind: "price_hike", weight: 1, duration: [6, 9], magnitude: [1.3, 1.5] },
+    { kind: "cert_expiry", weight: 1, duration: [4, 6], magnitude: [0.3, 0.5] },
+    { kind: "dependency_outage", weight: 1, duration: [5, 7], target: "rds" },
+  ],
+};
+const depthScripted = runLevel("first_light", 9, 1, null).incidents;
+const depA = runLevel("first_light", 9, 1800, depthDeck);
+const depB = runLevel("first_light", 9, 1800, depthDeck);
+if (depA.nan) problems.push("sim-depth deck run produced NaN");
+if (JSON.stringify(depA) !== JSON.stringify(depB)) problems.push("sim-depth deck run must be deterministic for a fixed seed");
+if (!(depA.incidents > depthScripted)) problems.push("sim-depth deck should fire its new-kind incidents during a run");
+
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
 console.log("headless run billTotal:", bill.totalSpent.toFixed(2));
@@ -411,5 +448,6 @@ console.log("deck sim run:", JSON.stringify({ scripted: scriptedCount, withDeck:
 console.log("company run:", JSON.stringify({ mode: co.mode, success: co.success, budget: Math.round(co.budget), day: +co.simDays.toFixed(1), milestones: mEvalRun.doneCount + "/" + mEvalRun.total, snapshotRestored: sameState }));
 console.log("realism:", JSON.stringify({ slo: +cm.sloCompliance.toFixed(3), peakBlast: +cm.peakBlastRadius.toFixed(3), worstRto: +cm.worstRtoSec.toFixed(1), dataLost: cm.dataLost, warmRamp: warm1.toFixed(1) + "→" + warm2.toFixed(1) + " (base " + baseCap + ")" }));
 console.log("telemetry:", JSON.stringify({ demandNow: +tl.demandNow.toFixed(2), margin: +tl.marginPerSec.toFixed(2), sloBurn: +tl.sloBurn.toFixed(2), headroom: +tl.headroom.toFixed(2), minHeadroom: +telA.minHeadroom.toFixed(2), peakDemand: +telA.peakDemand.toFixed(2), deterministic: telDet }));
+console.log("simDepth:", JSON.stringify({ scripted: depthScripted, withDeck: depA.incidents, deterministic: JSON.stringify(depA) === JSON.stringify(depB), success: depA.success, failed: depA.failed }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

@@ -829,6 +829,12 @@ export const LEVELS = {
         { kind: "az_failure", weight: 2, duration: [8, 13] },
         { kind: "cost_audit", weight: 2, duration: [10, 15], magnitude: [1.4, 1.8] },
         { kind: "spot_interruption", weight: 1, duration: [6, 10] },
+        // Sim-depth incident kinds — the richer "unforeseen circumstances".
+        { kind: "viral_spike", weight: 1, duration: [8, 14], magnitude: [2.6, 3.6] },
+        { kind: "noisy_neighbor", weight: 2, duration: [8, 14], magnitude: [0.55, 0.75] },
+        { kind: "price_hike", weight: 2, duration: [14, 22], magnitude: [1.3, 1.6] },
+        { kind: "cert_expiry", weight: 1, duration: [6, 10], magnitude: [0.35, 0.6] },
+        { kind: "dependency_outage", weight: 1, duration: [7, 11], target: "rds" },
       ],
     },
     // Per-request latency objective (T7.6): a served round-trip under this many ms
