@@ -714,6 +714,46 @@ const simDepth = await page.evaluate(async () => {
   };
 });
 
+// Sim-depth: ACM tile mitigates cert-expiry. The service exists (in the Security
+// tab) with full cert mitigation, and on the board it zeroes the edge drop.
+const acm = await page.evaluate(async () => {
+  const cat = await import("./src/services/catalog.js");
+  const gm = await import("./src/grid/grid.js");
+  const sm = await import("./src/sim/simulation.js");
+  const lm = await import("./src/levels/levels.js");
+  const rg = await import("./src/sim/rng.js");
+  const svc = cat.SERVICES.acm;
+  const secTab = (cat.PALETTE_GROUPS || []).find((t) => t.id === "security");
+  const inTab = !!secTab && secTab.ids.includes("acm");
+  // Composed run with a cert_expiry active the whole time, with vs without ACM.
+  const certRun = (withAcm) => {
+    const base = lm.LEVELS.first_light;
+    const lvl = { ...base, events: [{ at: 0, kind: "cert_expiry", duration: 9999, warn: 0, magnitude: 0.5 }], deck: undefined };
+    const grid = new gm.Grid(lvl.cols, lvl.rows);
+    const gks = [];
+    for (const gt of lvl.gates) { grid.place(cat.SERVICES.route53, gt.col, gt.row); gks.push(gm.Grid.key(gt.col, gt.row)); }
+    const [gc, gr] = gm.Grid.parseKey(gks[0]);
+    grid.place(cat.SERVICES.alb, gc + 1, gr);
+    grid.place(cat.SERVICES.ec2, gc + 2, gr);
+    grid.place(cat.SERVICES.rds, gc + 3, gr);
+    grid.addEdge(gm.Grid.key(gc, gr), gm.Grid.key(gc + 1, gr));
+    grid.addEdge(gm.Grid.key(gc + 1, gr), gm.Grid.key(gc + 2, gr));
+    grid.addEdge(gm.Grid.key(gc + 2, gr), gm.Grid.key(gc + 3, gr));
+    if (withAcm) grid.place(cat.SERVICES.acm, gc + 1, gr + 1);
+    const sim = new sm.Simulation({ level: lvl, grid, gateKeys: gks, rng: rg.makeRng(3), budget: lvl.budget });
+    for (let i = 0; i < 900; i++) { sim.recomputeRoute(); sim.step(1 / 60); sim.drainEmitted(); }
+    return sim.failed;
+  };
+  const failNoAcm = certRun(false);
+  const failAcm = certRun(true);
+  return {
+    exists: !!svc,
+    fullMitigation: !!svc && svc.certMitigation === 1,
+    inSecurityTab: inTab,
+    mitigates: failNoAcm > 0 && failAcm === 0,
+  };
+});
+
 // Sim-depth: right-sizing / tech-debt drift — a Building carries a `drift` field
 // and the bill applies a running-cost surcharge that scales with it.
 const drift = await page.evaluate(async () => {
@@ -862,6 +902,7 @@ console.log("rightWin:", JSON.stringify(rightWin));
 console.log("regionDR:", JSON.stringify(regionDR));
 console.log("runReport:", JSON.stringify(runReport));
 console.log("simDepth:", JSON.stringify(simDepth));
+console.log("acm:", JSON.stringify(acm));
 console.log("drift:", JSON.stringify(drift));
 console.log("reservation:", JSON.stringify(reservation));
 console.log("scaling:", JSON.stringify(scaling));
@@ -1023,6 +1064,10 @@ if (!simDepth.price)  problems.push("sim-depth: price_hike should inflate the bi
 if (!simDepth.noisy)  problems.push("sim-depth: noisy_neighbor should derate capacity");
 if (!simDepth.cert)   problems.push("sim-depth: cert_expiry should set an edge drop rate");
 if (!simDepth.depOut) problems.push("sim-depth: dependency_outage should disable only the targeted service");
+if (!acm.exists)         problems.push("acm: the ACM service should exist in the catalog");
+if (!acm.fullMitigation) problems.push("acm: ACM should carry certMitigation=1 (managed auto-renewal)");
+if (!acm.inSecurityTab)  problems.push("acm: ACM should appear in the Security palette group");
+if (!acm.mitigates)      problems.push("acm: an ACM tile should eliminate cert-expiry failures in a composed run");
 if (!drift.hasField)   problems.push("sim-depth: Building should carry a drift field");
 if (!drift.surcharges) problems.push("sim-depth: a drifted tile should raise the running burn (right-sizing surcharge)");
 if (!reservation.plans)     problems.push("sim-depth: reservation plans (compute + database) should exist");

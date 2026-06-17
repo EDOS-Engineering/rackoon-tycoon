@@ -6,6 +6,18 @@
 **Status:** Phases 1–6 ✅ **complete.** Feature-complete campaign: **19 levels + sandbox**, every SAA-C03 domain ≥3 boss levels; 24 services / 6 palette tabs; typed connections (VPC/Peering/TGW/PrivateLink) with transitive routing; realistic cross-AZ economy; incidents (AZ failure, traffic spike, cost audit, spot interruption, region failure, + sim-depth: viral spike, dependency outage, noisy neighbor, cert expiry, price hike). **Phase 7 ✅ R-series complete (R1–R6):** the simulation is now a standalone, headless, **seedable-deterministic** core (`sim/simulation.js`) driven by a living-economy **DemandModel** (diurnal/weekly/seasonal + compounding growth), an **Economy** ledger, a seeded escalating **IncidentDeck**, and a new **Company (free-run) mode** with business **milestones** + save/resume. Verified by `tooling/headless.mjs` (fast-run balancing harness) + the Playwright smoke. Stack: zero-dep vanilla. **Next:** T7.6 realism polish; **Phase 8** — the grand pivot: fork into a visual AWS SDK client.
 
 ## Progress log
+- **2026-06-17 — ACM tile: cert-expiry mitigation (feature branch).** The `cert_expiry`
+  incident (edge rejects a share of NEW TLS handshakes) finally has a counter-play: a new
+  **AWS Certificate Manager** tile (`acm`, Security tab, $20). It carries `certMitigation: 1`
+  and works **presence-based** (no wiring — control-plane), zeroing `edgeDropRate()` for the
+  board the way WAF/Shield absorb spike excess: managed certs auto-renew, so the edge never
+  fails a handshake. The cert-expiry warn banner now hints "place ACM to auto-renew". examTip
+  teaches the real lesson: ACM public certs are free + auto-renew **only when DNS-validated**
+  (the validation CNAME must stay in place); imported/manual certs are the ones that lapse.
+  Headless asserts a composed cert-expiry run fails connections without ACM and zero with it;
+  smoke asserts the service/tab/full-mitigation + the same composed mitigation in-browser.
+  → `services/catalog.js`, `sim/simulation.js`, `waves/events.js`, `tooling/{headless,smoke}.mjs`.
+  headless 0; smoke 0/0.
 - **2026-06-17 — Sim depth: auto-scaling policy / target-tracking (feature branch).**
   Company mode can now tune a live **auto-scaling policy** for the autoScale tier (Aurora
   Serverless v2) — two target-tracking knobs, exactly like an AWS scaling policy: **Target

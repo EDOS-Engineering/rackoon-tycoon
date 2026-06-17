@@ -286,7 +286,7 @@ function warningText(e, cols) {
     case EVENT_KIND.NOISY_NEIGHBOR:
       return "⚠ Noisy-neighbor contention rising — shared capacity about to derate";
     case EVENT_KIND.CERT_EXPIRY:
-      return "⚠ TLS certificate expiring — new connections will start failing";
+      return "⚠ TLS certificate expiring — new connections will start failing (place ACM to auto-renew)";
     case EVENT_KIND.PRICE_HIKE:
       return "⚠ Provider price increase announced — your bill is about to climb";
     default:

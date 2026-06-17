@@ -8,6 +8,9 @@
 //                      (NAT Gateway = 8×; VPC Endpoint = 0.02×; default = 1)
 //   attackMitigation — fraction of a traffic-spike spawnMultiplier excess absorbed
 //                      (WAF = 0.5, Shield = 0.75; default = 0)
+//   certMitigation   — fraction of a TLS cert-expiry edge-drop absorbed just by
+//                      being on the board (ACM = 1 → managed auto-renewal, certs
+//                      never lapse; presence-based, no wiring needed; default = 0)
 //   azResilient      — if true, tile is NOT disabled by an AZ failure event
 //                      (RDS Multi-AZ has a synchronous standby; default = false)
 //   autoScale        — if true, effective throughput scales with demand up to 2×
@@ -187,6 +190,24 @@ export const SERVICES = {
       "AWS Shield Advanced — premium DDoS protection. Absorbs 75% of any traffic spike excess, protecting upstream services. Expensive but essential during a DDoS wave.",
     examTip:
       "Shield Standard is free and always-on. Shield Advanced ($3,000/month) adds DRT access, real-time metrics, cost protection during attacks, and advanced anomaly detection.",
+  },
+
+  acm: {
+    id: "acm",
+    label: "AWS Certificate Manager",
+    short: "ACM",
+    emoji: "🔐",
+    role: ROLE.EDGE,
+    color: "#7c4dff",
+    cost: 20,
+    throughput: 999,
+    latency: 0,
+    certMitigation: 1, // managed auto-renewal — certs never lapse at the edge
+    placeable: true,
+    blurb:
+      "AWS Certificate Manager — provisions and AUTO-RENEWS TLS certificates. Place one to immunize the edge against cert-expiry incidents (no more failed handshakes). Control-plane: no wiring needed.",
+    examTip:
+      "ACM public certs are FREE and auto-renew when DNS-validated (the validation CNAME must stay in place). Imported/manual certs do NOT auto-renew — those are the ones that expire. ACM integrates with ALB, CloudFront, and API Gateway; it can't export the private key for use on EC2.",
   },
 
   // ---- Compute ----
@@ -505,7 +526,7 @@ export const PALETTE_GROUPS = [
   { id: "data",     label: "Data",     ids: ["kinesis_firehose", "s3", "s3_glacier"] },
   { id: "database", label: "DB",       ids: ["rds", "rds_multiaz", "rds_replica", "dynamodb", "aurora_sv2", "aurora_limitless"] },
   { id: "integration", label: "Msg",   ids: ["sqs", "sns"] },
-  { id: "security", label: "Security", ids: ["waf", "shield", "secrets_manager"] },
+  { id: "security", label: "Security", ids: ["waf", "shield", "acm", "secrets_manager"] },
 ];
 
 // Flat ordered list (all placeable services) — kept for smoke tests / iteration.

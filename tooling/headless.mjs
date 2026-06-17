@@ -569,5 +569,34 @@ const prebuilt = buildCompany(psnap.seed, psnap);
 if (prebuilt.scalePolicy().targetUtil !== 0.4 || prebuilt.scalePolicy().maxScale !== 3) problems.push("scaling: the policy should survive a snapshot/resume round-trip");
 
 console.log("scaling:", JSON.stringify({ cap2: +cap2.cap.toFixed(1), cap4: +cap4.cap.toFixed(1), leanCap: +lean.cap.toFixed(1), roomyCap: +roomy.cap.toFixed(1), base: aBase, burn1x: +scBurn0.toFixed(3), burn2x: +scBurn1.toFixed(3), clamped: psim.scalePolicy().targetUtil + "/" + psim.scalePolicy().maxScale }));
+
+// 16. Sim-depth: an ACM tile mitigates cert-expiry edge drops. With a cert_expiry
+//     active for a whole run, a share of NEW connections fail (failed handshake);
+//     an ACM tile on the board (certMitigation=1, managed auto-renewal) absorbs
+//     them entirely. Presence-based — the tile is placed unwired.
+function certRun(withAcm) {
+  const lvl = { ...getLevel("first_light"), events: [{ at: 0, kind: "cert_expiry", duration: 9999, warn: 0, magnitude: 0.5 }], deck: undefined };
+  const grid = new Grid(lvl.cols, lvl.rows);
+  const gks = [];
+  for (const gt of lvl.gates) { grid.place(SERVICES.route53, gt.col, gt.row); gks.push(Grid.key(gt.col, gt.row)); }
+  const [gc, gr] = Grid.parseKey(gks[0]);
+  grid.place(SERVICES.alb, gc + 1, gr);
+  grid.place(SERVICES.ec2, gc + 2, gr);
+  grid.place(SERVICES.rds, gc + 3, gr);
+  grid.addEdge(Grid.key(gc, gr), Grid.key(gc + 1, gr));
+  grid.addEdge(Grid.key(gc + 1, gr), Grid.key(gc + 2, gr));
+  grid.addEdge(Grid.key(gc + 2, gr), Grid.key(gc + 3, gr));
+  if (withAcm) grid.place(SERVICES.acm, gc + 1, gr + 1); // unwired — presence-based
+  const sim = new Simulation({ level: lvl, grid, gateKeys: gks, rng: makeRng(3), budget: lvl.budget });
+  for (let i = 0; i < 1200; i++) { sim.recomputeRoute(); sim.step(1 / 60); sim.drainEmitted(); }
+  return sim.failed;
+}
+const failNoAcm = certRun(false);
+const failAcm = certRun(true);
+if (!(SERVICES.acm && SERVICES.acm.certMitigation === 1)) problems.push("acm: the ACM service should exist with full cert mitigation");
+if (!(failNoAcm > 0)) problems.push("acm: a cert_expiry should fail some connections without ACM");
+if (failAcm !== 0) problems.push("acm: an ACM tile should eliminate cert-expiry failures (managed auto-renewal)");
+
+console.log("acm:", JSON.stringify({ failNoAcm, failAcm, certMitigation: SERVICES.acm.certMitigation }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);
