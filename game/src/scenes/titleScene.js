@@ -250,9 +250,9 @@ export class TitleScene extends Scene {
   _renderLevelSelect(ctx, cx, y, W) {
     this._levelBtns = [];
     const n = LEVEL_ORDER.length;
-    const cw = 168;
-    const ch = 56;
-    const gap = 12;
+    const cw = 128; // narrower chips to fit 7 levels on screen
+    const ch = 54;
+    const gap = 8;
     const totalW = n * cw + (n - 1) * gap;
     let x = cx - totalW / 2;
 
@@ -285,21 +285,23 @@ export class TitleScene extends Scene {
       ctx.stroke();
 
       ctx.fillStyle = unlocked ? PALETTE.text : PALETTE.textFaint;
-      ctx.font = "700 13px system-ui, sans-serif";
+      ctx.font = "700 12px system-ui, sans-serif";
       ctx.textAlign = "left";
-      ctx.fillText(unlocked ? lvl.name : "🔒 " + lvl.name, x + 12, y + 24);
+      // Truncate long names to fit the narrower chip
+      const nameStr = (unlocked ? "" : "🔒 ") + lvl.name;
+      ctx.fillText(nameStr.length > 18 ? nameStr.slice(0, 17) + "…" : nameStr, x + 8, y + 22);
 
       // Stars earned (or a hint).
-      ctx.font = "13px system-ui, sans-serif";
+      ctx.font = "12px system-ui, sans-serif";
       if (best && best.stars) {
         ctx.fillStyle = PALETTE.accent;
-        ctx.fillText("★".repeat(best.stars) + "☆".repeat(3 - best.stars), x + 12, y + 44);
+        ctx.fillText("★".repeat(best.stars) + "☆".repeat(3 - best.stars), x + 8, y + 40);
       } else if (unlocked) {
         ctx.fillStyle = PALETTE.textFaint;
-        ctx.fillText("☆☆☆  not cleared", x + 12, y + 44);
+        ctx.fillText("☆☆☆ not cleared", x + 8, y + 40);
       } else {
         ctx.fillStyle = PALETTE.textFaint;
-        ctx.fillText("win previous to unlock", x + 12, y + 44);
+        ctx.fillText("win prev. to unlock", x + 8, y + 40);
       }
       ctx.globalAlpha = 1;
       x += cw + gap;

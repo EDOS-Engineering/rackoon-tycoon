@@ -3,7 +3,7 @@
 > **Build your cloud empire. Tame the traffic.**
 > AWS SAA-C03 study guide reborn as a browser game. **Factorio meets RollerCoaster Tycoon.**
 
-**Status:** Phase 3 🚧 **in progress.** Sprint **3a landed & verified**: difficulty tiers (Architect / Senior / Principal — tighter budget + faster pace) and diagonal (8-neighbour) connections. Next in Phase 3: typed connections (T3.10), AWS-catalog breadth (3b), gap-mapped boss levels (3c). Phase 2 ✅ complete & tuned (economy, waves, events, win/lose, scoring, persistence, 3 levels). Stack: zero-dep vanilla.
+**Status:** Phase 3 🚧 **in progress.** Sprints 3a–3c landed: difficulty tiers, diagonal connections, R53 global model, 18-service catalog with category-tab palette, and 4 gap-mapped boss levels. Sprint 3d (teaching cards) next. Phase 2 ✅ complete & tuned. Stack: zero-dep vanilla.
 
 ## Progress log
 - **2026-06-16 — Phase 1 shipped.** `/game` built: vanilla JS ES modules + Canvas, zero deps, ~3,040 LOC across 22 files. Title → level → results scenes; grid build palette; Factorio-style wiring; BFS request routing (gate → nearest DB sink → back); revenue/lost counters; budget gate; localStorage best score; procedural Rocky-the-raccoon art. Verified via `tooling/smoke.mjs` (Playwright, dev-only). Study guide rebranded to Rackoon Tycoon; README rewritten as project doc. Git history rebuilt clean (no AI attribution). **Pending:** rename working dir to `rackoon-tycoon` (held — deferred so it doesn't break an open editor/session).
@@ -116,28 +116,27 @@ Work is **phased** — one phase per session to preserve context. Each phase end
       **budget** and **speeds up** the whole round. Selectable + persisted on the
       title screen, applied per level. → `save/difficulty.js`, `titleScene`, `levelScene`
 - [x] T3.9 Diagonal grid connections — 8-neighbour wiring + routing. → `grid.js`
-- [ ] T3.10 **Typed connections** (not merely wires) — an edge gains a *type*
-      mapping to a real AWS networking construct, each with distinct visuals + a
-      gameplay effect (e.g. a Gateway/PrivateLink **Endpoint** link with near-zero
-      data-transfer cost vs a plain VPC link; Transit Gateway / VPC peering /
-      Direct Connect as later types). Connection-type picker in the build bar.
-      → `grid.js`, `gridRenderer`, `ui/palette`, `economy/billing`, `levelScene`
+- [x] T3.13 Route 53 global model — gate tile immune to AZ failures; can wire directly
+      to endpoints in any AZ (no adjacency constraint). Help overlay + level briefing
+      updated to teach the concept. → `levelScene.js`, `levels.js`, `catalog.js`
 
-**Sprint 3b — AWS-sim breadth (toward the Epoch goal)**
-- [ ] T3.11 Expand the service catalog toward a semi-complete AWS set: edge/security
-      (CloudFront, WAF, Shield, NAT Gateway, VPC Endpoint), data (Kinesis Streams
-      vs Firehose, DAX), DB variants (read replica, Multi-AZ standby, Aurora
-      Limitless/Serverless) — each with stats, role, and connection rules.
-- [ ] T3.12 Topology rules per service/connection so designs reflect real AWS
-      constraints (tighten `canConnect` + connection-type legality).
+**Sprint 3b — AWS-sim breadth** ✅
+- [x] T3.11 Expanded catalog (18 placeable services): CloudFront, WAF, Shield, NAT Gateway,
+      VPC Endpoint; Kinesis Streams, Kinesis Firehose; Aurora SV2, Aurora Limitless,
+      RDS Multi-AZ, RDS Read Replica. Each with stats + gameplay-effect properties
+      (`transferCostMul`, `attackMitigation`, `azResilient`, `autoScale`, `replayable`).
+- [x] T3.12 Gameplay mechanics wired: NAT ×8 transfer cost, VPCE ×0.02, WAF/Shield
+      spike absorption, Multi-AZ AZ resilience, SV2 auto-scaling throughput. Category-tab
+      palette (Net/Compute/Data/DB/Security) replaces the flat row. → `catalog.js`,
+      `palette.js`, `levelScene.js`, `load.js`
 
-**Sprint 3c — Gap-mapped boss levels** (each teaches one Priority Gap)
-- [ ] T3.1 "The Leaky Pipe" — NAT money-leak; fix with a Gateway VPC Endpoint connection.
-- [ ] T3.2 "Mesh vs Bridge" — internal Lattice mesh vs PrivateLink to an external partner zone.
-- [ ] T3.3 "Replay or It's Gone" — Streams (replayable) vs Firehose (funnel-to-S3) under a data wave.
-- [ ] T3.4 "Single Writer's Burden" — DB overload: auto-grow (v2) vs shard (Limitless).
-- [ ] T3.5 "Raccoons at the Gate" — DDoS wave; place Shield/WAF/CloudFront.
-- [x] T3.6 "When the Zone Goes Dark" — AZ failure; spread across zones. *(shipped as the `zone_down` level in Phase 2; refine with Multi-AZ vs read-replica tiles in 3b.)*
+**Sprint 3c — Gap-mapped boss levels** ✅
+- [x] T3.1 "The Leaky Pipe" — NAT money-leak; pre-seeded NAT + cost audit; fix = VPC Endpoint.
+- [ ] T3.2 "Mesh vs Bridge" — deferred to Phase 5 (requires typed connections).
+- [x] T3.3 "Replay or It's Gone" — Kinesis Streams (replayable) vs Firehose (no-replay sink).
+- [x] T3.4 "Single Writer's Burden" — Aurora SV2 (vertical auto-scale) vs Limitless (horizontal).
+- [x] T3.5 "Raccoons at the Gate" — DDoS traffic spikes; place Shield/WAF/CloudFront.
+- [x] T3.6 "When the Zone Goes Dark" — shipped Phase 2; updated with RDS Multi-AZ tip in briefing.
 
 **Sprint 3d — Teaching layer**
 - [ ] T3.7 In-level teaching cards + post-level "exam tip" tie-back to the study guide.
@@ -156,6 +155,21 @@ Work is **phased** — one phase per session to preserve context. Each phase end
 - [ ] T4.6 Final QA, README for the game, link study guide ↔ game.
 
 > **End of Phase 4:** complete, polished, shippable. Final commit.
+
+### 🔵 PHASE 5 — Deep networking layer (deferred)
+
+**Sprint 5 — Typed connections & VPC topology**
+- [ ] T5.1 **Typed connections** — edges gain a *type* mapping to a real AWS
+      networking construct, each with distinct visuals + gameplay effects:
+      plain VPC link, Gateway VPC Endpoint (near-zero data-transfer cost),
+      PrivateLink, Transit Gateway, Direct Connect, VPC Peering.
+      Connection-type picker in the build bar.
+      → `grid.js`, `gridRenderer`, `ui/palette`, `economy/billing`, `levelScene`
+- [ ] T5.2 Per-type topology rules — tighten `canConnect` and billing per connection
+      type (e.g. Gateway Endpoint only valid Gate/S3 or Gate/DynamoDB pairs,
+      Direct Connect only valid with on-prem/partner zones added in 3b).
+
+> **End of Phase 5:** the wire layer becomes a real VPC networking sim.
 
 ---
 

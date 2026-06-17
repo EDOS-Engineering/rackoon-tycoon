@@ -1,20 +1,21 @@
 // levels.js — Data-driven level definitions.
-// Phase 1 shipped "First Light" (a gentle free-build intro). Phase 2 extends the
-// same generic record with `waves`, `events`, and win/lose config — without
-// touching the engine — and adds two pressure levels. Phase 3 gap-puzzles can
-// extend this further (e.g. `requiredService`, tightened topology).
+// Each record shapes one playable level. Phase-2+ fields are optional; sensible
+// defaults apply. Sprint 3c adds 4 gap-mapped boss levels, each teaching one
+// SAA-C03 Priority Gap through the game mechanics.
 //
-// Record shape (all Phase-2 fields optional; sensible defaults apply):
+// Record shape:
 //   id, name, subtitle, cols, rows, budget, spawnRate, gates, seed, intro
-//   goalRequests   — routed-request target (a win condition + results goal)
+//   goalRequests   — routed-request target (win condition)
 //   next           — id of the level this one unlocks on a win
-//   slaMaxDropRate — lose if the drop rate exceeds this (default 0.35)
-//   waves          — [{ name, duration, rate }]  spawn-rate timeline (T2.2)
-//   events         — [{ at, kind, duration, warn, zone?, magnitude? }] (T2.3)
+//   slaMaxDropRate — lose if drop rate exceeds this (default 0.35)
+//   waves          — [{ name, duration, rate }]
+//   events         — [{ at, kind, duration, warn, zone?, magnitude? }]
+//   seed           — [{ id, col, row }] pre-placed buildings (player wires them)
 //
-// Event kinds: "az_failure" | "traffic_spike" | "cost_audit" (see waves/events).
+// Event kinds: "az_failure" | "traffic_spike" | "cost_audit"
 
 export const LEVELS = {
+  // ---- Tutorial ----
   first_light: {
     id: "first_light",
     name: "First Light",
@@ -27,19 +28,18 @@ export const LEVELS = {
     seed: [],
     goalRequests: 30,
     next: "rush_hour",
-    // Gentle intro: a soft single ramp, no disruptions. The live bill still
-    // ticks (T2.1) so players learn to watch their burn before the stakes rise.
     waves: [
-      { name: "Quiet open", duration: 24, rate: 0.8 },
-      { name: "First guests", duration: 28, rate: 1.1 },
+      { name: "Quiet open",  duration: 24, rate: 0.8  },
+      { name: "First guests", duration: 28, rate: 1.1  },
       { name: "Steady flow", duration: 32, rate: 1.35 },
     ],
-    events: [], // no events in the tutorial level
-    slaMaxDropRate: 0.5, // forgiving SLA while learning
+    events: [],
+    slaMaxDropRate: 0.5,
     intro:
       "Welcome, Rocky! Get guests from the front gate to a database and back.\n\n1) Click a service in the bottom bar, then click an empty tile to place it — try an ALB, then EC2, then RDS.\n2) Drag between neighbouring tiles to wire them up: gate → ALB → EC2 → RDS.\n\nGuests then flow on their own: completed round-trips earn money, while your live AWS bill (top-left) slowly burns budget. Route 30 guests to win. Take your time — the shift starts when you click Begin. Press H any time for a help legend.",
   },
 
+  // ---- Phase 2 levels ----
   rush_hour: {
     id: "rush_hour",
     name: "Rush Hour",
@@ -52,14 +52,11 @@ export const LEVELS = {
     seed: [],
     goalRequests: 70,
     next: "zone_down",
-    // Escalating waves climb past a single DB's throughput — players must add
-    // caches / parallel compute / a higher-throughput sink (DynamoDB) or watch
-    // latency spike and requests drop. One mid-level traffic spike to test it.
     waves: [
-      { name: "Warm-up", duration: 20, rate: 0.9 },
+      { name: "Warm-up",      duration: 20, rate: 0.9 },
       { name: "Morning rush", duration: 26, rate: 1.5 },
-      { name: "Peak load", duration: 30, rate: 2.3 },
-      { name: "Wind-down", duration: 16, rate: 1.2 },
+      { name: "Peak load",    duration: 30, rate: 2.3 },
+      { name: "Wind-down",    duration: 16, rate: 1.2 },
     ],
     events: [
       { at: 44, kind: "traffic_spike", duration: 9, warn: 6, magnitude: 1.7 },
@@ -80,30 +77,160 @@ export const LEVELS = {
     gates: [{ col: 1, row: 5 }],
     seed: [],
     goalRequests: 90,
-    next: null, // end of the Phase-2 set (Phase 3 boss gaps continue from here)
-    // The board is split into 3 AZ bands by column. A mid-level AZ failure takes
-    // a whole band offline: anything you single-pointed there goes dark. Spread
-    // compute + a second DB across zones to keep routing through the outage.
-    // A cost audit afterward squeezes the budget — don't over-provision.
+    next: "leaky_pipe",
     waves: [
-      { name: "Warm-up", duration: 18, rate: 0.9 },
+      { name: "Warm-up",       duration: 18, rate: 0.9 },
       { name: "Build pressure", duration: 26, rate: 1.6 },
-      { name: "Peak load", duration: 30, rate: 2.4 },
-      { name: "Aftermath", duration: 22, rate: 1.5 },
+      { name: "Peak load",     duration: 30, rate: 2.4 },
+      { name: "Aftermath",     duration: 22, rate: 1.5 },
     ],
     events: [
-      { at: 34, kind: "traffic_spike", duration: 8, warn: 6, magnitude: 1.6 },
-      { at: 58, kind: "az_failure", duration: 14, warn: 8, zone: 1 },
-      { at: 86, kind: "cost_audit", duration: 14, warn: 6, magnitude: 1.5 },
+      { at: 34, kind: "traffic_spike", duration:  8, warn: 6, magnitude: 1.6 },
+      { at: 58, kind: "az_failure",    duration: 14, warn: 8, zone: 1 },
+      { at: 86, kind: "cost_audit",    duration: 14, warn: 6, magnitude: 1.5 },
     ],
     slaMaxDropRate: 0.32,
     intro:
-      "The park spans three Availability Zones (column bands). Mid-shift, a zone goes DARK — every building there is disabled and routes through it break.\n\nRoute 53 is a GLOBAL service: it stays online even when a zone fails, and you can wire it directly to ALBs or compute in any AZ — no need to chain through an intermediate zone.\n\nDesign for resilience: wire Route 53 to endpoints across all zones, spread compute and a second database across AZs so traffic reroutes automatically. Then a cost audit inflates your bill. Route 90 to win.",
+      "The park spans three Availability Zones (column bands). Mid-shift, a zone goes DARK — every building there is disabled and routes through it break.\n\nRoute 53 is a GLOBAL service: it stays online even when a zone fails, and you can wire it directly to ALBs or compute in any AZ — no need to chain through an intermediate zone.\n\nTip: RDS Multi-AZ (DB tab) has a synchronous standby and survives AZ failure automatically. RDS Read Replica is cheaper but won't auto-promote.\n\nDesign for resilience: wire Route 53 to endpoints in multiple AZs, spread compute and a Multi-AZ database across zones. Then a cost audit hits. Route 90 to win.",
+  },
+
+  // ---- Sprint 3c: Gap-mapped boss levels ----
+
+  // T3.1 — Priority Gap: Gateway VPC Endpoint vs NAT cost
+  leaky_pipe: {
+    id: "leaky_pipe",
+    name: "The Leaky Pipe",
+    subtitle: "Stop the money-drain before the auditor arrives",
+    cols: 16,
+    rows: 9,
+    budget: 2000,
+    spawnRate: 0.85,
+    gates: [{ col: 1, row: 4 }],
+    // A NAT Gateway and an S3 bucket are pre-placed. The player must decide
+    // whether to wire through the NAT (8× transfer cost) or bypass it with a
+    // VPC Endpoint (0.02× transfer cost). A harsh cost audit arrives at t=28.
+    seed: [
+      { id: "nat_gateway", col: 7, row: 4 },
+      { id: "s3",          col: 12, row: 4 },
+    ],
+    goalRequests: 55,
+    next: "raccoons_gate",
+    waves: [
+      { name: "Trickle",      duration: 20, rate: 0.8 },
+      { name: "Steady flow",  duration: 28, rate: 1.4 },
+      { name: "Afternoon rush", duration: 28, rate: 1.8 },
+      { name: "Late surge",   duration: 20, rate: 1.5 },
+    ],
+    events: [
+      { at: 28, kind: "cost_audit", duration: 18, warn: 7, magnitude: 2.5 },
+      { at: 58, kind: "traffic_spike", duration: 10, warn: 6, magnitude: 1.8 },
+    ],
+    slaMaxDropRate: 0.35,
+    intro:
+      "A NAT Gateway and an S3 bucket are already on the board. You need to route guests from the gate through compute to S3 — but watch your bill.\n\nNAT Gateway has ×8 data-transfer cost per hop. Every packet crossing it is 8× more expensive than a plain wire. VPC Endpoint (Gateway type) routes the same traffic inside AWS with near-zero cost.\n\nThe auditor arrives early (⚠ cost audit inbound). If you're running NAT, you'll feel it. Replace or bypass the NAT Gateway with a VPC Endpoint and wire it into the path instead.\n\nCheck the 'Net' tab in the palette. Route 55 to win.",
+  },
+
+  // T3.5 — Priority Gap: DDoS resilience (Shield / WAF / CloudFront)
+  raccoons_gate: {
+    id: "raccoons_gate",
+    name: "Raccoons at the Gate",
+    subtitle: "A DDoS wave is incoming — deploy your defences",
+    cols: 18,
+    rows: 10,
+    budget: 3200,
+    spawnRate: 0.9,
+    gates: [{ col: 1, row: 5 }],
+    seed: [],
+    goalRequests: 80,
+    next: "replay_or_gone",
+    waves: [
+      { name: "Normal traffic", duration: 22, rate: 0.9  },
+      { name: "Rising noise",   duration: 20, rate: 1.3  },
+      { name: "DDoS wave",      duration: 30, rate: 2.0  },
+      { name: "Sustained attack", duration: 24, rate: 1.7 },
+    ],
+    // Two large traffic spikes simulate the DDoS. Without WAF/Shield the spike
+    // multiplier floods every building; with them most of the excess is absorbed.
+    events: [
+      { at: 30, kind: "traffic_spike", duration: 14, warn: 8, magnitude: 2.8 },
+      { at: 62, kind: "traffic_spike", duration: 12, warn: 6, magnitude: 2.5 },
+      { at: 82, kind: "cost_audit",    duration: 10, warn: 5, magnitude: 1.4 },
+    ],
+    slaMaxDropRate: 0.35,
+    intro:
+      "Threat intel: a DDoS wave is headed your way — two large traffic spikes will hit the park.\n\nWithout protection, the multiplier floods your compute and databases; queues fill and guests drop. AWS WAF (Security tab) absorbs 50% of any spike multiplier excess. Shield Advanced absorbs 75%. Place them before the first wave hits.\n\nTip: Wire CloudFront in front of your ALB — it also has lower data-transfer cost and very high throughput, so it absorbs volume before it reaches your origin.\n\nRoute 80 to win.",
+  },
+
+  // T3.3 — Priority Gap: Kinesis Streams (replayable) vs Kinesis Firehose (no replay)
+  replay_or_gone: {
+    id: "replay_or_gone",
+    name: "Replay or It's Gone",
+    subtitle: "IoT stream processing — choose your pipeline carefully",
+    cols: 18,
+    rows: 10,
+    budget: 2600,
+    spawnRate: 0.85,
+    gates: [{ col: 1, row: 5 }],
+    seed: [],
+    goalRequests: 70,
+    next: "single_writer",
+    waves: [
+      { name: "Sensor warm-up",  duration: 18, rate: 0.8 },
+      { name: "Data burst",      duration: 26, rate: 1.6 },
+      { name: "Peak telemetry",  duration: 30, rate: 2.2 },
+      { name: "Wind-down",       duration: 18, rate: 1.3 },
+    ],
+    events: [
+      { at: 32, kind: "traffic_spike", duration: 12, warn: 7, magnitude: 2.0 },
+      { at: 60, kind: "az_failure",    duration: 12, warn: 8, zone: 2 },
+      { at: 78, kind: "cost_audit",    duration: 10, warn: 5, magnitude: 1.3 },
+    ],
+    slaMaxDropRate: 0.35,
+    intro:
+      "You're processing a high-volume IoT telemetry stream. Two very different services handle it — choose wisely.\n\nKinesis Data Streams (Compute tab): replayable event stream. 24-hour default retention, up to 365 days. Downstream consumers can re-read data if processing fails. Use this for real-time analytics where replay matters.\n\nKinesis Firehose (Data tab): reliable, high-throughput delivery to S3. No replay — once the data is delivered, the stream is gone. Use this as the final sink into your data lake.\n\nAn AZ failure hits late in the shift. Design your pipeline to survive it: Streams in compute, Firehose as the final sink to S3. Route 70 to win.",
+  },
+
+  // T3.4 — Priority Gap: Aurora Serverless v2 (vertical) vs Aurora Limitless (horizontal)
+  single_writer: {
+    id: "single_writer",
+    name: "Single Writer's Burden",
+    subtitle: "The write throughput ceiling is closing in",
+    cols: 18,
+    rows: 11,
+    budget: 3500,
+    spawnRate: 1.0,
+    gates: [{ col: 1, row: 5 }],
+    seed: [],
+    goalRequests: 100,
+    next: null, // end of Sprint 3c campaign
+    waves: [
+      { name: "Baseline",        duration: 16, rate: 0.8  },
+      { name: "Growth",          duration: 22, rate: 1.4  },
+      { name: "Scaling pressure", duration: 28, rate: 2.2  },
+      { name: "Ceiling test",    duration: 26, rate: 3.0  },
+      { name: "Sustained peak",  duration: 20, rate: 2.5  },
+    ],
+    events: [
+      { at: 38, kind: "traffic_spike", duration: 12, warn: 7, magnitude: 2.2 },
+      { at: 68, kind: "traffic_spike", duration: 14, warn: 7, magnitude: 2.8 },
+      { at: 90, kind: "cost_audit",    duration: 12, warn: 5, magnitude: 1.4 },
+    ],
+    slaMaxDropRate: 0.30,
+    intro:
+      "Write traffic is about to overwhelm a single database. You need to choose the right scaling strategy before the ceiling hits.\n\nAurora Serverless v2 (DB tab): vertical auto-scaling. Handles traffic spikes by scaling ACUs up automatically — up to 2× base throughput. One writer. Best for unpredictable workloads with moderate peaks.\n\nAurora Limitless (DB tab): horizontal sharding — breaks the single-writer ceiling by distributing writes across shard nodes. Handles extreme throughput. Very expensive; only reach for it when v2's ceiling is genuinely insufficient.\n\nThe wave peaks at 3× rate. Plan your database strategy early — once queues overflow, it's hard to recover. Route 100 to win.",
   },
 };
 
 // Campaign order (drives unlock chain + level-select on the title screen).
-export const LEVEL_ORDER = ["first_light", "rush_hour", "zone_down"];
+export const LEVEL_ORDER = [
+  "first_light",
+  "rush_hour",
+  "zone_down",
+  "leaky_pipe",
+  "raccoons_gate",
+  "replay_or_gone",
+  "single_writer",
+];
 
 export const FIRST_LEVEL = "first_light";
 

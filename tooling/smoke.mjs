@@ -160,6 +160,18 @@ const r53 = await page.evaluate(async () => {
   };
 });
 
+// Sprint 3c: verify boss levels registered + leaky_pipe has its NAT Gateway seed.
+const levels3c = await page.evaluate(async () => {
+  const m = await import("./src/levels/levels.js");
+  const lp = m.LEVELS.leaky_pipe;
+  return {
+    levelCount: m.LEVEL_ORDER.length,
+    leakyExists: !!lp,
+    leakySeedHasNat: lp?.seed?.some((s) => s.id === "nat_gateway"),
+    singleWriterIsLast: m.LEVEL_ORDER.at(-1) === "single_writer",
+  };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -169,6 +181,7 @@ console.log("playing:", JSON.stringify(playing));
 console.log("diagonal:", JSON.stringify(diag));
 console.log("difficulty:", JSON.stringify(diff));
 console.log("catalog3b:", JSON.stringify(catalog3b));
+console.log("levels3c:", JSON.stringify(levels3c));
 console.log("r53 global:", JSON.stringify(r53));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -200,6 +213,14 @@ if (!catalog3b.rdsMAZResilient)        problems.push("RDS Multi-AZ azResilient s
 if (!catalog3b.aurSV2AutoScale)        problems.push("Aurora SV2 autoScale should be true");
 if (!catalog3b.streamsReplayable)      problems.push("Kinesis Streams replayable should be true");
 if (catalog3b.groupCount !== 5)        problems.push("PALETTE_GROUPS should have 5 groups");
+if (levels3c.levelCount !== 7)      problems.push("LEVEL_ORDER should have 7 levels");
+if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
+if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
+if (!levels3c.singleWriterIsLast)   problems.push("single_writer should be last level");
+if (levels3c.levelCount !== 7)      problems.push("LEVEL_ORDER should have 7 levels");
+if (!levels3c.leakyExists)          problems.push("leaky_pipe level missing");
+if (!levels3c.leakySeedHasNat)      problems.push("leaky_pipe seed missing nat_gateway");
+if (!levels3c.singleWriterIsLast)   problems.push("single_writer should be last level");
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 
 process.exit(errors.length || problems.length ? 1 : 0);
