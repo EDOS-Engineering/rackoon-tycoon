@@ -765,6 +765,22 @@ export const LEVELS = {
       growthCap: 6,
     },
     events: [],
+    // R5 (T7.3): a gentle, never-ending incident deck so the living sandbox keeps
+    // testing your architecture — one incident at a time, escalating slowly.
+    deck: {
+      firstAt: 18,
+      baseInterval: 20,
+      intervalDecay: 0.94,
+      minInterval: 12,
+      warn: 6,
+      cooldown: 16,
+      maxActive: 1,
+      cards: [
+        { kind: "traffic_spike", weight: 3, duration: [6, 9], magnitude: [1.4, 1.9] },
+        { kind: "az_failure", weight: 2, duration: [7, 11] },
+        { kind: "cost_audit", weight: 2, duration: [9, 13], magnitude: [1.3, 1.6] },
+      ],
+    },
     slaMaxDropRate: 0.55,
     intro:
       "Sandbox mode — no goals, no time limit, no loss conditions. Build any architecture you like and watch the traffic flow.\n\nThis board runs a living economy: traffic rises and falls over each compressed day, dips on weekends, and your customer base compounds over time — so demand keeps climbing the longer you run. Watch the day/phase chip (top-right).\n\nEvery service is available. Experiment freely: try NAT vs VPC Endpoint cost, watch Shield absorb spikes, test Aurora SV2 auto-scaling under load. Use the reinvestment slider (top-right) to feed revenue back into your budget.\n\nPress Esc to return to the menu. The AWS bill still runs, so you'll see how different architectures affect your burn rate — experiment!",

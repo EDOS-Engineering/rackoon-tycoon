@@ -455,10 +455,18 @@ the data-driven catalog/levels pattern):
   first_light replays byte-identical. Headless asserts the ledger invariants + that a
   composed run never drives budget < 0. Growth/churn hang off this ledger next (T7.2 cont.).
   → `economy/economy.js`, `sim/simulation.js`, `scenes/levelScene.js`, `tooling/headless.mjs`. headless 0; smoke 0/0.
-- **R5 — `IncidentDeck`** — replace the scripted `EventDirector` timeline with a
-  seeded, weighted, telegraphed, escalating draw (cooldowns), **keeping** the existing
-  query interface (`isTileDisabled/spawnMultiplier/billMultiplier/banner`) so levels +
-  smoke don't notice; new kinds (viral spike, dependency outage, RPO/RTO restore) added data-driven. → **T7.3**
+- **R5 — `IncidentDeck`. ✅ DONE (2026-06-17).** New `waves/incidents.js` `IncidentDeck`:
+  a seeded draw engine that picks weighted incident cards over time, telegraphed (`warn`
+  lead), cooldown-spaced (global + per-kind), with escalation (interval shrinks + severity
+  grows per draw) and a `maxActive` ceiling. `EventDirector` composes it (4th ctor arg) and
+  feeds each drawn incident into its normal `events[]` lifecycle, so EVERY query
+  (`isTileDisabled/isTileInFailedRegion/failedZones/spawnMultiplier/billMultiplier/
+  spotInterrupted/banner`), the smoke's direct `events.push`, and the resilience scoring
+  work unchanged. A level opts in via `deck{}` (Simulation passes `level.deck`); sandbox now
+  ships a gentle endless deck (one incident at a time, slow escalation). Headless asserts
+  the deck is seeded-deterministic, telegraphed, escalating, and that a deck-driven sim run
+  fires incidents beyond the scripted set + replays identically. headless 0; smoke 0/0.
+  → `waves/incidents.js`, `waves/events.js`, `sim/simulation.js`, `levels/levels.js`, `tooling/headless.mjs`.
 - **R6 — Company/run state + milestones + save/resume** — `mode: campaign|company`;
   milestone-based `evaluate` alongside the binary one; run snapshot/resume in `save/`. → **T7.4**
 
@@ -471,7 +479,7 @@ the data-driven catalog/levels pattern):
   "free-run" company** mode (run until bankruptcy/quit, scored by peak). Player picks
   per mission. Shapes R6 (`mode: scenario|freerun`, milestone-or-peak `evaluate`).
 
-**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → ~~R4~~ ✅ → **(R5 — next)** → R6; T7.6 realism (latency SLOs,
+**Order:** ~~R2~~ ✅ → ~~R1~~ ✅ → ~~R3~~ ✅ → ~~R4~~ ✅ → ~~R5~~ ✅ → **(R6 — next)**; T7.6 realism (latency SLOs,
 scaling-lag/warm-up in `LoadModel`, blast radius via the deck, RPO/RTO) rides on the
 stable seams. **Single best first step: R2.** Each step lands runnable + smoke-checked,
 and steps 3–6 each ship ≥1 headless balancing assertion.

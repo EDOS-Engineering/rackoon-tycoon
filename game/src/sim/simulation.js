@@ -60,7 +60,9 @@ export class Simulation {
     // the source of truth for the spawn-rate multiplier; the WaveScheduler stays
     // for legacy `waves[]` levels and for phase/progress + win bookkeeping.
     this.demand = level.demand ? new DemandModel(level.demand) : null;
-    this.events = new EventDirector(level.events, level.cols, rng);
+    // R5: a level may also supply a `deck{}` for unscripted, escalating incidents
+    // drawn over time (on top of any scripted `events[]`).
+    this.events = new EventDirector(level.events, level.cols, rng, level.deck);
     this.loadModel = new LoadModel(rng);
 
     // Outcome + resilience tracking.

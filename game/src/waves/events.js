@@ -22,6 +22,8 @@
 //
 // Lifecycle states per event: "pending" -> "warning" -> "active" -> "done".
 
+import { IncidentDeck } from "./incidents.js";
+
 export const EVENT_KIND = {
   AZ_FAILURE: "az_failure",
   TRAFFIC_SPIKE: "traffic_spike",
@@ -55,7 +57,9 @@ const DEFAULT_EVENTS = [
 
 export class EventDirector {
   // `rng` is the seedable sim RNG (defaults to Math.random for back-compat).
-  constructor(events, cols, rng = Math.random) {
+  // `deck` (optional, Phase 7 R5) is an IncidentDeck spec: when present the
+  // director draws unscripted incidents over time on top of any scripted events.
+  constructor(events, cols, rng = Math.random, deck = null) {
     this.cols = cols;
     this._rng = rng;
     // Clone events and assign random zones for AZ failures whose zone was not
@@ -83,6 +87,8 @@ export class EventDirector {
       return ev;
     });
     this.t = 0;
+    // R5: optional unscripted incident deck. Lazy import kept at module top.
+    this.deck = deck ? new IncidentDeck(deck, rng) : null;
   }
 
   reset() {
@@ -98,6 +104,33 @@ export class EventDirector {
       if ((e.state === "warning" || e.state === "pending") && this.t >= e.at)
         e.state = "active";
       if (e.state === "active" && this.t >= e.at + e.duration) e.state = "done";
+    }
+    // Draw any unscripted incident due now and schedule it like a normal event
+    // (it'll telegraph then activate on subsequent ticks via the loop above).
+    if (this.deck) {
+      const activeCount = this.events.filter((e) => e.state === "active").length;
+      const drawn = this.deck.maybeDraw(this.t, activeCount);
+      if (drawn) {
+        this._placeDrawn(drawn);
+        this.events.push(drawn);
+      }
+    }
+  }
+
+  // Assign a spatial target to a freshly-drawn incident: an AZ failure prefers a
+  // zone that isn't already down; a region failure downs every band but the last.
+  _placeDrawn(ev) {
+    if (ev.kind === EVENT_KIND.AZ_FAILURE && ev.zone == null) {
+      const failed = this.failedZones();
+      const avail = [];
+      for (let z = 0; z < AZ_COUNT; z++) if (!failed.has(z)) avail.push(z);
+      ev.zone = avail.length
+        ? avail[Math.floor(this._rng() * avail.length)]
+        : Math.floor(this._rng() * AZ_COUNT);
+    }
+    if (ev.kind === EVENT_KIND.REGION_FAILURE && ev.zones == null) {
+      ev.zones = [];
+      for (let z = 0; z < AZ_COUNT - 1; z++) ev.zones.push(z);
     }
   }
 

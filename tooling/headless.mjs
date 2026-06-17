@@ -16,6 +16,7 @@ import { SERVICES } from "../game/src/services/catalog.js";
 import { Simulation } from "../game/src/sim/simulation.js";
 import { DemandModel } from "../game/src/waves/demand.js";
 import { Economy } from "../game/src/economy/economy.js";
+import { IncidentDeck } from "../game/src/waves/incidents.js";
 import { getLevel } from "../game/src/levels/levels.js";
 
 const problems = [];
@@ -71,8 +72,11 @@ if (!(bill.totalSpent > 0)) problems.push("bill should accrue running cost over 
 //    of compressed sim time. Same seed → identical (success, failed, budget);
 //    a different seed (almost surely) differs. This is the surface that R3/R4/R5
 //    balancing hangs off — the whole reason for the extraction.
-function runLevel(levelId, seed, steps = 2400) {
-  const level = getLevel(levelId);
+function runLevel(levelId, seed, steps = 2400, deck = undefined) {
+  // `deck === null` strips a level's own deck; an object overrides it; undefined
+  // leaves it as authored.
+  const base = getLevel(levelId);
+  const level = deck === undefined ? base : { ...base, deck: deck || undefined };
   const grid = new Grid(level.cols, level.rows);
   const gateKeys = [];
   for (const gt of level.gates) {
@@ -107,6 +111,7 @@ function runLevel(levelId, seed, steps = 2400) {
     budget: Math.round(sim.budget),
     bill: +sim.bill.totalSpent.toFixed(2),
     outcome: sim.outcome,
+    incidents: sim.events.events.length,
     nan,
   };
 }
@@ -145,7 +150,9 @@ if (!(dm.rateAt(0) >= 0.1)) problems.push("demand: rate should be floored above 
 //    same seed replays identically, guests route, and demand late in the run
 //    outpaces early (the growth curve shows up in throughput).
 function runWindow(seed) {
-  const level = getLevel("sandbox");
+  // Strip the sandbox's incident deck so this demand-growth test stays isolated
+  // from R5 incidents (a random AZ failure could kill the single test route).
+  const level = { ...getLevel("sandbox"), deck: undefined };
   const grid = new Grid(level.cols, level.rows);
   const gateKeys = [];
   for (const gt of level.gates) {
@@ -199,6 +206,53 @@ if (eco.lost !== 6) problems.push("economy: penalize() should accumulate lost");
 if (!eco.canAfford(60) || eco.canAfford(61)) problems.push("economy: canAfford() boundary wrong");
 if (simA.budget < 0 || sbA.sim.budget < 0) problems.push("economy: a composed sim run should never drive the budget below $0");
 
+// 8. IncidentDeck (Phase 7 R5): unscripted incidents drawn over time — seeded
+//    (a fixed seed replays exactly), telegraphed (each is scheduled `warn` ahead
+//    of when it fires), cooldown-spaced, and escalating (gaps shrink over a run).
+function deckDraws(seed) {
+  const d = new IncidentDeck({
+    firstAt: 5, baseInterval: 12, intervalDecay: 0.8, minInterval: 4, warn: 3,
+    jitter: 0.2, cooldown: 6, maxActive: 9,
+    cards: [
+      { kind: "traffic_spike", weight: 1, duration: [5, 5], magnitude: [1.5, 1.5] },
+      { kind: "az_failure", weight: 1, duration: [6, 6] },
+    ],
+  }, makeRng(seed));
+  const out = [];
+  for (let t = 0; t < 150; t += 0.5) {
+    const ev = d.maybeDraw(+t.toFixed(2), 0);
+    if (ev) out.push({ at: +t.toFixed(2), fires: +ev.at.toFixed(2), kind: ev.kind });
+  }
+  return out;
+}
+const dkA = deckDraws(101), dkB = deckDraws(101), dkC = deckDraws(202);
+if (JSON.stringify(dkA) !== JSON.stringify(dkB)) problems.push("incident deck: same seed must draw identically");
+if (JSON.stringify(dkA) === JSON.stringify(dkC)) problems.push("incident deck: a different seed should draw differently");
+if (!(dkA.length >= 6)) problems.push("incident deck: should draw several incidents over the run");
+if (!dkA.every((e) => e.fires > e.at)) problems.push("incident deck: every incident must be telegraphed (fires after its draw)");
+// Escalation: the gap between the last two draws should be tighter than the first two.
+const firstGap = dkA[1].at - dkA[0].at;
+const lastGap = dkA[dkA.length - 1].at - dkA[dkA.length - 2].at;
+if (!(lastGap < firstGap)) problems.push("incident deck: draws should escalate (later gaps tighter than early ones)");
+
+// A deck-driven Simulation run is deterministic and actually fires incidents
+// beyond the level's scripted set.
+const deckSpec = {
+  firstAt: 5, baseInterval: 8, intervalDecay: 0.85, minInterval: 5, warn: 3,
+  cooldown: 6, maxActive: 2,
+  cards: [
+    { kind: "traffic_spike", weight: 2, duration: [5, 8], magnitude: [1.4, 1.8] },
+    { kind: "az_failure", weight: 1, duration: [6, 9] },
+    { kind: "cost_audit", weight: 1, duration: [8, 10], magnitude: [1.3, 1.5] },
+  ],
+};
+const scriptedCount = runLevel("first_light", 7, 1, null).incidents; // deck stripped → scripted only
+const deckRunA = runLevel("first_light", 7, 1800, deckSpec);
+const deckRunB = runLevel("first_light", 7, 1800, deckSpec);
+if (deckRunA.nan) problems.push("incident-deck sim run produced NaN");
+if (JSON.stringify(deckRunA) !== JSON.stringify(deckRunB)) problems.push("incident-deck sim run must be deterministic for a fixed seed");
+if (!(deckRunA.incidents > scriptedCount)) problems.push("incident deck should fire incidents beyond the scripted set during a run");
+
 console.log("zones(seed=12345):", JSON.stringify(zA));
 console.log("dropSeq deterministic:", dA === dB, " varies-by-seed:", dA !== dC);
 console.log("headless run billTotal:", bill.totalSpent.toFixed(2));
@@ -210,5 +264,7 @@ console.log("sandbox demand run:", JSON.stringify({
   success: sbA.sim.success, earlyRouted: sbA.earlyRouted, lateRouted: sbA.lateRouted,
   label: sbA.sim.demand.label(sbA.sim.simTime),
 }));
+console.log("incident deck draws(seed101):", dkA.length, " firstGap:", firstGap.toFixed(1), " lastGap:", lastGap.toFixed(1));
+console.log("deck sim run:", JSON.stringify({ scripted: scriptedCount, withDeck: deckRunA.incidents, outcome: deckRunA.outcome, deterministic: JSON.stringify(deckRunA) === JSON.stringify(deckRunB) }));
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);
