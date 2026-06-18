@@ -870,6 +870,55 @@ const scalePanel = await page.evaluate(async () => {
   };
 });
 
+// Wire deletion (Safari-friendly): the Erase tool cuts the hovered wire on a
+// LEFT click (no right-button needed), the wire highlights on hover, and the AZ
+// bands line up with the per-column zone logic.
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "sandbox" }));
+await page.waitForTimeout(300);
+const wireCut = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current; s.started = true;
+  const cat = await import("./src/services/catalog.js");
+  const gm = await import("./src/grid/grid.js");
+  const ev = await import("./src/waves/events.js");
+  const cam = s.game.camera, inp = s.game.input, T = gm.TILE, S = cat.SERVICES;
+  const reset = () => { inp.keys.clear(); inp.keysDown.clear(); inp.leftDown = false; inp.rightDown = false; };
+
+  // A wire spanning non-adjacent tiles, so there's empty board along it to click.
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const a = { c: gc + 1, r: gr + 2 }, b = { c: gc + 4, r: gr + 2 };
+  s.grid.place(S.ec2, a.c, a.r); s.grid.place(S.rds, b.c, b.r);
+  s.grid.addEdge(gm.Grid.key(a.c, a.r), gm.Grid.key(b.c, b.r), "vpc");
+  const k = gm.Grid.key(a.c, a.r);
+  const had = s.grid.neighbors(k).size > 0;
+
+  // Cursor over an EMPTY tile that lies on the wire (between the endpoints).
+  const wx = (a.c + 2 + 0.5) * T, wy = (a.r + 0.5) * T; // tile a.c+2, empty
+  cam.x = wx; cam.y = wy;
+  const sp = cam.worldToScreen(wx, wy);
+  reset(); inp.x = sp.x; inp.y = sp.y;
+  s.palette._arm("erase");
+
+  s.update(0.016);                      // computes _hoverWire from the cursor
+  const hovered = !!s._hoverWire;
+  inp.leftDown = true; s.update(0.016); // left-click cuts it
+  const cut = s.grid.neighbors(k).size === 0;
+  reset();
+
+  // AZ band alignment: zoneColumnRange is the exact inverse of zoneOfColumn.
+  let azAligned = true;
+  for (const cols of [10, 11, 13]) {
+    let expect = 0;
+    for (let z = 0; z < ev.AZ_COUNT; z++) {
+      const [c0, c1] = ev.zoneColumnRange(z, cols);
+      if (c0 !== expect) azAligned = false;
+      for (let c = c0; c <= c1; c++) if (ev.zoneOfColumn(c, cols) !== z) azAligned = false;
+      expect = c1 + 1;
+    }
+    if (expect !== cols) azAligned = false;
+  }
+  return { had, hovered, cut, azAligned };
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -907,6 +956,7 @@ console.log("drift:", JSON.stringify(drift));
 console.log("reservation:", JSON.stringify(reservation));
 console.log("scaling:", JSON.stringify(scaling));
 console.log("scalePanel:", JSON.stringify(scalePanel));
+console.log("wireCut:", JSON.stringify(wireCut));
 console.log("sandboxFix:", JSON.stringify(sandboxFix));
 console.log("ERRORS(" + errors.length + "):", errors.join("\n") || "none");
 
@@ -1079,6 +1129,9 @@ if (!scaling.headroom)  problems.push("sim-depth: a lower target util should hol
 if (!scaling.bills)     problems.push("sim-depth: a scaled autoScale tile should bill for the extra capacity");
 if (!scalePanel.hasPanel)  problems.push("sim-depth: the auto-scaling panel should register its four ± buttons");
 if (!scalePanel.maxUp || !scalePanel.utilDown) problems.push("sim-depth: setScalePolicy should move the live policy knobs");
+if (!wireCut.hovered)   problems.push("wire-cut: a wire under the cursor should register as the hover-wire");
+if (!wireCut.cut)       problems.push("wire-cut: an Erase-tool LEFT click on a wire should cut it (Safari-friendly)");
+if (!wireCut.azAligned) problems.push("wire-cut: AZ bands (zoneColumnRange) should match the per-column zone (zoneOfColumn)");
 
 console.log("phase4:", JSON.stringify(phase4));
 

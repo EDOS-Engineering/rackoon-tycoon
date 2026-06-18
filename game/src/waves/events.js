@@ -46,9 +46,17 @@ export function zoneOfColumn(col, cols) {
   return Math.min(AZ_COUNT - 1, Math.floor(col / band));
 }
 
+// Inclusive [first, last] column range of a zone. This MUST be the exact inverse
+// of zoneOfColumn (col belongs to zone z ⟺ floor(col/band) === z), so the drawn
+// AZ bands line up with the per-column zone logic. floor(col/band) === z holds for
+// columns in [ceil(z*band), ceil((z+1)*band) - 1] — note ceil, not floor; using
+// floor shifts the interior bands off by a column on non-divisible boards. The
+// last zone clamps to the final column.
 export function zoneColumnRange(zone, cols) {
   const band = cols / AZ_COUNT;
-  return [Math.floor(zone * band), Math.floor((zone + 1) * band) - 1];
+  const c0 = Math.ceil(zone * band);
+  const c1 = zone === AZ_COUNT - 1 ? cols - 1 : Math.ceil((zone + 1) * band) - 1;
+  return [c0, c1];
 }
 
 export const AZ_LABELS = ["us-rk-1a", "us-rk-1b", "us-rk-1c"];

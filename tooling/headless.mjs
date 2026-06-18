@@ -7,7 +7,7 @@
 // NOT shipped with the game; does not affect the zero-dependency guarantee.
 
 import { makeRng } from "../game/src/sim/rng.js";
-import { EventDirector } from "../game/src/waves/events.js";
+import { EventDirector, zoneOfColumn, zoneColumnRange, AZ_COUNT } from "../game/src/waves/events.js";
 import { LoadModel, DEFAULT_SCALE_POLICY } from "../game/src/waves/load.js";
 import { BillMeter } from "../game/src/economy/billing.js";
 import { WaveScheduler } from "../game/src/waves/scheduler.js";
@@ -598,5 +598,29 @@ if (!(failNoAcm > 0)) problems.push("acm: a cert_expiry should fail some connect
 if (failAcm !== 0) problems.push("acm: an ACM tile should eliminate cert-expiry failures (managed auto-renewal)");
 
 console.log("acm:", JSON.stringify({ failNoAcm, failAcm, certMitigation: SERVICES.acm.certMitigation }));
+
+// 17. AZ band alignment: zoneColumnRange must be the EXACT inverse of
+//     zoneOfColumn for any board width — the drawn bands cover [0, cols-1] with
+//     no gap/overlap, and every column in a zone's range maps back to that zone.
+//     The old floor() boundary shifted the interior bands off by a column on
+//     boards whose width isn't a multiple of AZ_COUNT (the reported us-rk-1b bug).
+{
+  let azProblem = null;
+  for (const cols of [9, 10, 11, 12, 13, 16, 20, 7]) {
+    let expect = 0; // next zone must start exactly where the previous ended
+    for (let z = 0; z < AZ_COUNT && !azProblem; z++) {
+      const [c0, c1] = zoneColumnRange(z, cols);
+      if (c0 !== expect) azProblem = `cols=${cols} zone=${z} starts ${c0}, expected ${expect}`;
+      for (let c = c0; c <= c1 && !azProblem; c++) {
+        if (zoneOfColumn(c, cols) !== z) azProblem = `cols=${cols} col=${c} drawn in zone ${z} but zoneOfColumn=${zoneOfColumn(c, cols)}`;
+      }
+      expect = c1 + 1;
+    }
+    if (!azProblem && expect !== cols) azProblem = `cols=${cols} bands cover ${expect} cols, expected ${cols}`;
+  }
+  if (azProblem) problems.push("az-bands: " + azProblem);
+  console.log("azBands:", JSON.stringify({ ok: !azProblem, range10: [zoneColumnRange(0, 10), zoneColumnRange(1, 10), zoneColumnRange(2, 10)] }));
+}
+
 console.log("PROBLEMS(" + problems.length + "):", problems.join(" | ") || "none");
 process.exit(problems.length ? 1 : 0);

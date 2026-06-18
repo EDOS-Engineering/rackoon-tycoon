@@ -6,6 +6,20 @@
 **Status:** Phases 1–6 ✅ **complete.** Feature-complete campaign: **19 levels + sandbox**, every SAA-C03 domain ≥3 boss levels; 24 services / 6 palette tabs; typed connections (VPC/Peering/TGW/PrivateLink) with transitive routing; realistic cross-AZ economy; incidents (AZ failure, traffic spike, cost audit, spot interruption, region failure, + sim-depth: viral spike, dependency outage, noisy neighbor, cert expiry, price hike). **Phase 7 ✅ R-series complete (R1–R6):** the simulation is now a standalone, headless, **seedable-deterministic** core (`sim/simulation.js`) driven by a living-economy **DemandModel** (diurnal/weekly/seasonal + compounding growth), an **Economy** ledger, a seeded escalating **IncidentDeck**, and a new **Company (free-run) mode** with business **milestones** + save/resume. Verified by `tooling/headless.mjs` (fast-run balancing harness) + the Playwright smoke. Stack: zero-dep vanilla. **Next:** T7.6 realism polish; **Phase 8** — the grand pivot: fork into a visual AWS SDK client.
 
 ## Progress log
+- **2026-06-17 — Reliable wire deletion + AZ band alignment fix (feature branch).** Two bug
+  fixes. (1) **Wire deletion** was right-click only — unreliable on Safari / Mac trackpads
+  (Cmd-click + two-finger gestures don't fire a usable rightDown) and gave no visible target.
+  Now the wire under the cursor **highlights** (segment-distance hit, forgiving radius, ✂ marker —
+  red while the Erase tool is armed, amber otherwise) and the **Erase tool cuts it on a LEFT
+  click** (the reliable cross-platform path: click a building to remove it, or empty board along
+  a wire to cut it). Right-click and Delete/Backspace still cut too. New `_wireNearWorld` (nearest
+  edge via point-to-segment distance) + `_cutWire`, replacing the midpoint-only `_tryCutWireNear`.
+  (2) **AZ band misalignment**: `zoneColumnRange` drew band boundaries with `Math.floor`, but
+  `zoneOfColumn` assigns columns with `floor(col/band)` — on boards whose width isn't a multiple
+  of 3 the interior band (us-rk-1b) shifted off by a column each side. Made `zoneColumnRange` the
+  exact inverse using `Math.ceil` (+ last-zone clamp). Headless asserts the inverse property over
+  many widths; smoke asserts the left-click cut + hover-highlight + the alignment. → `waves/events.js`,
+  `scenes/levelScene.js`, `ui/palette.js`, `tooling/{headless,smoke}.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — ACM tile: cert-expiry mitigation (feature branch).** The `cert_expiry`
   incident (edge rejects a share of NEW TLS handshakes) finally has a counter-play: a new
   **AWS Certificate Manager** tile (`acm`, Security tab, $20). It carries `certMitigation: 1`

@@ -308,7 +308,7 @@ export class BuildPalette {
     } else if (hov === "__wire") {
       this._toolTip(ctx, bar, "Wire tool", "Drag between two services to lay a wire — any distance. Pick the connection type in the row above (or press C to cycle). Right-click a wire to cut it.");
     } else if (hov === "__erase") {
-      this._toolTip(ctx, bar, "Erase tool", "Click a building to remove it (refunds its cost). Gate tiles cannot be removed.");
+      this._toolTip(ctx, bar, "Erase tool", "Click a building to remove it (refunds its cost), or click a wire to cut it. Gate tiles cannot be removed. Wires can also be cut by right-click or Delete.");
     }
 
     ctx.textBaseline = "alphabetic";
