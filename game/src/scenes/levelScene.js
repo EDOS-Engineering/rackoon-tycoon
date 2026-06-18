@@ -343,14 +343,24 @@ export class LevelScene extends Scene {
       }
     }
 
+    // The wire currently under the cursor (nearest segment within a forgiving
+    // radius), recomputed each frame. Drives the cut-hover highlight + every
+    // delete path. Cleared while over UI / panning so the highlight doesn't show.
+    this._hoverWire =
+      !overUI && !overReservation && !overScale && !this._panning
+        ? this._wireNearWorld(world)
+        : null;
+
     // ---- World interactions (only when not over UI and not panning) ----
     if (!overUI && !overReservation && !overScale && !this._panning) {
       this._handleWorld(input);
     }
 
-    // Right-click — or Delete/Backspace — on a wire cuts it (any armed tool).
-    if ((input.rightDown || input.pressed("Delete") || input.pressed("Backspace")) && this.hoverTile) {
-      this._tryCutWireNear(this.hoverTile.col, this.hoverTile.row, world);
+    // Cut the highlighted wire: right-click, or Delete/Backspace (both work
+    // regardless of armed tool). Left-click cutting lives in the Erase tool
+    // (_handleWorld) so it's reliable on trackpads with no real right button.
+    if ((input.rightDown || input.pressed("Delete") || input.pressed("Backspace")) && this._hoverWire) {
+      this._cutWire(this._hoverWire);
     }
 
     // ---- Begin the round when the briefing is dismissed (intro-grace). The
@@ -493,16 +503,21 @@ export class LevelScene extends Scene {
       return;
     }
 
-    // ERASE mode: left-click removes a building (refund), except the gate.
+    // ERASE mode: left-click removes the building under the cursor (refund, except
+    // the gate) — or, if there's no removable building there, cuts the wire under
+    // the cursor. Left-click works on every pointer/trackpad (Safari included),
+    // so this is the primary, reliable wire-delete path.
     if (this.palette.eraseMode) {
-      if (input.leftDown && t) {
-        const b = this.grid.getBuilding(t.col, t.row);
+      if (input.leftDown) {
+        const b = t && this.grid.getBuilding(t.col, t.row);
         if (b && b.service.role !== "gate") {
           this.grid.remove(t.col, t.row);
           this.sim.economy.credit(b.service.cost); // refund
           this._routeDirty = true;
           audio.play("erase");
           this.sim._dropPacketsOnBrokenPaths();
+        } else if (!b && this._hoverWire) {
+          this._cutWire(this._hoverWire);
         }
       }
       return;
@@ -557,27 +572,35 @@ export class LevelScene extends Scene {
     }
   }
 
-  // Cut a wire if the cursor is near a midpoint of one touching this tile.
-  _tryCutWireNear(col, row, world) {
-    const k = Grid.key(col, row);
+  // The wire whose segment passes nearest the cursor, within a forgiving radius
+  // (so you can aim anywhere along the wire, not just its midpoint). Returns
+  // {c1,r1,c2,r2} or null. Tile centers are the wire endpoints.
+  _wireNearWorld(world) {
+    if (!world) return null;
     let best = null;
-    let bestD = 1e9;
-    for (const nk of this.grid.neighbors(k)) {
-      const [nc, nr] = Grid.parseKey(nk);
-      const mx = ((col + nc) / 2) * TILE + TILE / 2;
-      const my = ((row + nr) / 2) * TILE + TILE / 2;
-      const d = Math.hypot(world.x - mx, world.y - my);
+    let bestD = TILE * 0.42; // hit radius around the wire line
+    this.grid.forEachEdge((c1, r1, c2, r2) => {
+      const ax = (c1 + 0.5) * TILE, ay = (r1 + 0.5) * TILE;
+      const bx = (c2 + 0.5) * TILE, by = (r2 + 0.5) * TILE;
+      const d = distPointToSegment(world.x, world.y, ax, ay, bx, by);
       if (d < bestD) {
         bestD = d;
-        best = nk;
+        best = { c1, r1, c2, r2 };
       }
-    }
-    if (best && bestD < TILE * 0.6) {
-      const [nc, nr] = Grid.parseKey(best);
-      this.grid.removeEdge(col, row, nc, nr);
+    });
+    return best;
+  }
+
+  // Cut a specific wire and reconcile routing + in-flight packets.
+  _cutWire(w) {
+    if (!w) return false;
+    if (this.grid.removeEdge(w.c1, w.r1, w.c2, w.r2)) {
       this._routeDirty = true;
       this.sim._dropPacketsOnBrokenPaths();
+      audio.play("erase");
+      return true;
     }
+    return false;
   }
 
   // Drain the side-effect events the sim queued during step() and turn them into
@@ -682,6 +705,30 @@ export class LevelScene extends Scene {
     // Availability-Zone bands + any failed-zone wash (T2.3), under the wires.
     drawAZBands(ctx, this.grid, this.events.failedZones(), this.time);
     drawWires(ctx, this.grid, this.time);
+
+    // Cut-hover: highlight the wire under the cursor so it is visibly selectable
+    // before deleting it. Red while the Erase tool is armed (left-click cuts);
+    // amber otherwise (right-click or Delete cuts). A ✂ marks the target.
+    if (this._hoverWire && !this.wireFrom) {
+      const w = this._hoverWire;
+      const ax = (w.c1 + 0.5) * TILE, ay = (w.r1 + 0.5) * TILE;
+      const bx = (w.c2 + 0.5) * TILE, by = (w.r2 + 0.5) * TILE;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.strokeStyle = this.palette.eraseMode ? PALETTE.bad : "rgba(255,179,71,0.95)";
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.font = "16px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("✂", (ax + bx) / 2, (ay + by) / 2);
+      ctx.restore();
+    }
 
     // Hover highlight + ghost/wire previews.
     if (this.hoverTile) {
@@ -1132,7 +1179,8 @@ export class LevelScene extends Scene {
 
     const rows = [
       ["🎯", "Goal", "Route the target number of guests: gate → compute → database → back."],
-      ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag from one service to another to wire — any distance, no adjacency needed; right-click (or Delete) a wire to cut."],
+      ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag from one service to another to wire — any distance, no adjacency needed."],
+      ["✂️", "Delete wire", "Hover a wire — it highlights. Cut it with the Erase tool (left-click), or right-click, or Delete. Left-click is the reliable path on trackpads."],
       ["⌨️", "Keyboard", "Arrow keys move a cursor over the build bar (Left/Right within a row, Up/Down between wire-type · tabs · tools+services) and select on the move. Keys 1–9 arm the Nth service in the active tab. C cycles the wire type. WASD pans the camera."],
       ["🔌", "Connection types", "Pick the wire type in the bar (or press C): VPC link, VPC Peering, Transit Gateway, PrivateLink. Each prices the hop differently — TGW always adds processing; PrivateLink avoids the cross-AZ penalty but must end at a sink."],
       ["💰", "AWS bill", "Buildings + data transfer burn your budget (top-left). Intra-AZ traffic is FREE; a wire crossing an AZ band (amber) costs 8× per hop. Multi-AZ resilience is real money — keep chatty tiers in one AZ. Don't let the budget hit $0."],
@@ -1689,6 +1737,15 @@ export class LevelScene extends Scene {
 // ---- helpers ----
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+// Shortest distance from point (px,py) to the segment (ax,ay)-(bx,by).
+function distPointToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const cx = ax + t * dx, cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
 }
 function wrapText(text, n) {
   const words = text.split(/\s+/);
