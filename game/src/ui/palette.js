@@ -33,6 +33,86 @@ export class BuildPalette {
     this.hoverId    = null;
     this._t         = 0;
     this._barRect   = null; // full bar rect (for isOver)
+
+    // Keyboard cursor (Arrow-key navigation). Rows: 0 = wire-protocol chips,
+    // 1 = category tabs, 2 = tools + services. The cursor selects on the move.
+    this.kbActive = false; // highlight shown once keyboard nav is first used
+    this.kbRow    = 2;
+    this.kbCol    = 0;
+  }
+
+  // Flat id list for a nav row. Row 2 is in visual order: tools then services.
+  _rowIds(row) {
+    if (row === 0) return CONN_ORDER.slice();
+    if (row === 1) return PALETTE_GROUPS.map((g) => g.id);
+    const grp = PALETTE_GROUPS.find((g) => g.id === this.activeGroup) || PALETTE_GROUPS[0];
+    return ["__wire", "__erase", ...grp.ids];
+  }
+
+  // Column index of the row's currently-active item, so Up/Down lands on what is
+  // already selected (no accidental tab/type switch from merely changing rows).
+  _activeColForRow(row) {
+    if (row === 0) return Math.max(0, CONN_ORDER.indexOf(this.connType));
+    if (row === 1) return Math.max(0, PALETTE_GROUPS.findIndex((g) => g.id === this.activeGroup));
+    const ids = this._rowIds(2);
+    const armed = this.wireMode ? "__wire" : this.eraseMode ? "__erase" : this.selected;
+    const i = armed ? ids.indexOf(armed) : -1;
+    return i >= 0 ? i : Math.min(this.kbCol, ids.length - 1);
+  }
+
+  // Move the keyboard cursor and select-by-move. dx/dy in {-1,0,1}. `budget`
+  // gates arming an unaffordable service (the highlight still moves there).
+  moveCursor(dx, dy, budget = Infinity) {
+    this.kbActive = true;
+    if (dy) {
+      this.kbRow = Math.max(0, Math.min(2, this.kbRow + dy));
+      this.kbCol = this._activeColForRow(this.kbRow); // land on the active item
+    }
+    const ids = this._rowIds(this.kbRow);
+    if (dx) {
+      this.kbCol = (this.kbCol + dx + ids.length) % ids.length; // wrap within row
+    } else {
+      this.kbCol = Math.max(0, Math.min(ids.length - 1, this.kbCol));
+    }
+    this._selectCursor(budget);
+    return this._rowIds(this.kbRow)[this.kbCol];
+  }
+
+  // Apply the item under the cursor: pick a wire protocol, switch tab, or arm a
+  // tool/service — mirroring what a mouse click on that item would do.
+  _selectCursor(budget = Infinity) {
+    const ids = this._rowIds(this.kbRow);
+    const id = ids[this.kbCol];
+    if (id == null) return;
+    if (this.kbRow === 0) {
+      this.connType = id;
+    } else if (this.kbRow === 1) {
+      if (id !== this.activeGroup) {
+        this.activeGroup = id;
+        this._clear(); // deselect tool when switching groups (matches click path)
+      }
+    } else if (id === "__wire") {
+      this._arm("wire");
+    } else if (id === "__erase") {
+      this._arm("erase");
+    } else {
+      const svc = SERVICES[id];
+      if (svc && svc.cost <= budget) this._arm("build", id); // unaffordable: no-op
+    }
+  }
+
+  // Arm the Nth service in the active group directly (number-key hotkeys).
+  armServiceByIndex(i, budget = Infinity) {
+    const grp = PALETTE_GROUPS.find((g) => g.id === this.activeGroup) || PALETTE_GROUPS[0];
+    const id = grp.ids[i];
+    if (!id) return false;
+    const svc = SERVICES[id];
+    if (!svc || svc.cost > budget) return false;
+    this.kbActive = true;
+    this.kbRow = 2;
+    this.kbCol = 2 + i; // tools occupy columns 0,1
+    this._arm("build", id);
+    return true;
   }
 
   // Compute layout from screen dimensions. Returns the full bar rect.
@@ -295,6 +375,27 @@ export class BuildPalette {
         ctx.fillText("$" + svc.cost, r.x + r.w / 2, r.y + r.h - 7);
       }
       ctx.restore();
+    }
+
+    // Keyboard cursor highlight (Arrow-key navigation): a dashed ring on the item
+    // the cursor currently sits on, across whichever row it's in.
+    if (this.kbActive) {
+      let rk = null;
+      if (this.kbRow === 0) rk = this._connRects[this.kbCol];
+      else if (this.kbRow === 1) rk = this._tabRects[this.kbCol];
+      else {
+        const id = this._rowIds(2)[this.kbCol];
+        rk = this._rects.find((r) => r.id === id);
+      }
+      if (rk) {
+        ctx.save();
+        ctx.strokeStyle = PALETTE.accent2;
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        roundRect(ctx, rk.x - 3, rk.y - 3, rk.w + 6, rk.h + 6, 8);
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // Tooltip for hovered service (above the bar)

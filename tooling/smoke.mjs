@@ -919,6 +919,71 @@ const wireCut = await page.evaluate(async () => {
   return { had, hovered, cut, azAligned };
 });
 
+// Keyboard controls: Arrow-key palette cursor (select-by-move), number hotkeys,
+// Delete-to-cut-wire, and the WASD-pans / Arrows-don't-pan split (regression).
+await page.evaluate(() => window.__rackoon.scenes.go("level", { levelId: "sandbox" }));
+await page.waitForTimeout(300);
+const keyboard = await page.evaluate(async () => {
+  const s = window.__rackoon.scenes.current;
+  s.started = true;
+  const p = s.palette;
+  const cat = await import("./src/services/catalog.js");
+  const gm = await import("./src/grid/grid.js");
+  const grp0 = cat.PALETTE_GROUPS[0];
+  const out = {};
+
+  // --- Palette cursor: select-by-move ---
+  p.activeGroup = grp0.id; p.kbActive = false;
+  p.kbRow = 2; p.kbCol = 0; p.moveCursor(0, 0);     // col 0 → __wire
+  out.armsWire = p.wireMode === true;
+  p.kbRow = 2; p.kbCol = 0; p.moveCursor(1, 0);     // → __erase
+  out.armsErase = p.eraseMode === true && p.kbCol === 1;
+  p.moveCursor(1, 0);                                // → first service
+  out.armsService = p.selected === grp0.ids[0];
+  p.moveCursor(0, -1);                               // up to tab row
+  out.onTabRow = p.kbRow === 1;
+  const g0 = p.activeGroup; p.moveCursor(1, 0);      // next tab
+  out.switchesTab = p.activeGroup !== g0;
+  p.moveCursor(0, -1);                               // up to conn row
+  const c0 = p.connType; p.moveCursor(1, 0);         // next wire protocol
+  out.changesConn = p.kbRow === 0 && p.connType !== c0;
+
+  // --- Number hotkey arms the Nth service ---
+  p.activeGroup = grp0.id;
+  out.numberArms = p.armServiceByIndex(0, Infinity) && p.selected === grp0.ids[0];
+
+  // --- Pan split: WASD pans, Arrows do NOT (regression guard) ---
+  const cam = s.game.camera, inp = s.game.input;
+  const reset = () => { inp.keys.clear(); inp.keysDown.clear(); };
+  reset(); cam.x = 0; inp.keys.add("KeyD"); s.update(0.1);
+  out.wasdPans = cam.x > 0;
+  reset(); cam.x = 0; inp.keys.add("ArrowLeft"); s.update(0.1);
+  out.arrowsNoPan = cam.x === 0;
+
+  // --- Arrow key routed through scene.update drives the cursor ---
+  reset(); p.kbActive = false; p.kbRow = 2; p.kbCol = 0;
+  inp.keysDown.add("ArrowRight"); s.update(0.016);
+  out.arrowKeyNavs = p.kbActive === true;
+
+  // --- Delete cuts the wire under the cursor ---
+  reset();
+  const S = cat.SERVICES, T = gm.TILE;
+  const [gc, gr] = s.gateKeys[0].split(",").map(Number);
+  const a = { c: gc + 1, r: gr + 2 }, b = { c: gc + 2, r: gr + 2 };
+  s.grid.place(S.ec2, a.c, a.r); s.grid.place(S.rds, b.c, b.r);
+  s.grid.addEdge(gm.Grid.key(a.c, a.r), gm.Grid.key(b.c, b.r), "vpc");
+  const had = s.grid.neighbors(gm.Grid.key(a.c, a.r)).size > 0;
+  // Center the camera on tile a so the cursor sits mid-screen (clear of the bar).
+  cam.x = (a.c + 0.5) * T; cam.y = (a.r + 0.5) * T;
+  const mid = cam.worldToScreen((a.c + 0.5) * T, (a.r + 0.5) * T);
+  inp.x = mid.x; inp.y = mid.y;
+  inp.keysDown.add("Delete"); s.update(0.016);
+  const still = s.grid.neighbors(gm.Grid.key(a.c, a.r)).size > 0;
+  out.deleteCutsWire = had && !still;
+  reset();
+  return out;
+});
+
 await browser.close();
 
 console.log("briefing:", JSON.stringify(briefing));
@@ -952,6 +1017,7 @@ console.log("regionDR:", JSON.stringify(regionDR));
 console.log("runReport:", JSON.stringify(runReport));
 console.log("simDepth:", JSON.stringify(simDepth));
 console.log("acm:", JSON.stringify(acm));
+console.log("keyboard:", JSON.stringify(keyboard));
 console.log("drift:", JSON.stringify(drift));
 console.log("reservation:", JSON.stringify(reservation));
 console.log("scaling:", JSON.stringify(scaling));
@@ -1118,6 +1184,17 @@ if (!acm.exists)         problems.push("acm: the ACM service should exist in the
 if (!acm.fullMitigation) problems.push("acm: ACM should carry certMitigation=1 (managed auto-renewal)");
 if (!acm.inSecurityTab)  problems.push("acm: ACM should appear in the Security palette group");
 if (!acm.mitigates)      problems.push("acm: an ACM tile should eliminate cert-expiry failures in a composed run");
+if (!keyboard.armsWire)     problems.push("keyboard: cursor on the wire tool should arm wire mode");
+if (!keyboard.armsErase)    problems.push("keyboard: cursor right of wire should arm erase");
+if (!keyboard.armsService)  problems.push("keyboard: cursor should arm the first service of the active tab");
+if (!keyboard.onTabRow)     problems.push("keyboard: Up should move the cursor onto the tab row");
+if (!keyboard.switchesTab)  problems.push("keyboard: Left/Right on the tab row should switch category");
+if (!keyboard.changesConn)  problems.push("keyboard: Left/Right on the conn row should change the wire protocol");
+if (!keyboard.numberArms)   problems.push("keyboard: a number hotkey should arm the Nth service");
+if (!keyboard.wasdPans)     problems.push("keyboard: WASD should still pan the camera (no regression)");
+if (!keyboard.arrowsNoPan)  problems.push("keyboard: Arrow keys should no longer pan the camera");
+if (!keyboard.arrowKeyNavs) problems.push("keyboard: an Arrow key through update should drive the palette cursor");
+if (!keyboard.deleteCutsWire) problems.push("keyboard: Delete should cut the wire under the cursor");
 if (!drift.hasField)   problems.push("sim-depth: Building should carry a drift field");
 if (!drift.surcharges) problems.push("sim-depth: a drifted tile should raise the running burn (right-sizing surcharge)");
 if (!reservation.plans)     problems.push("sim-depth: reservation plans (compute + database) should exist");

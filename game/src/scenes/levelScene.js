@@ -202,6 +202,28 @@ export class LevelScene extends Scene {
       this.connType = this.palette.connType;
     }
 
+    // ---- Keyboard palette cursor (Arrow keys). Arrows drive a cursor over the
+    // build bar — Left/Right within a row, Up/Down between rows (wire-protocol /
+    // category tabs / tools+services) — selecting on the move, so you can change
+    // resource without the mouse. Number keys 1–9 jump-arm the Nth service in the
+    // active tab. Delete/Backspace cuts the wire under the cursor. ----
+    const navBudget = this.budget;
+    let navMoved = false;
+    if (input.pressed("ArrowLeft"))  { this.palette.moveCursor(-1, 0, navBudget); navMoved = true; }
+    if (input.pressed("ArrowRight")) { this.palette.moveCursor(1, 0, navBudget);  navMoved = true; }
+    if (input.pressed("ArrowUp"))    { this.palette.moveCursor(0, -1, navBudget); navMoved = true; }
+    if (input.pressed("ArrowDown"))  { this.palette.moveCursor(0, 1, navBudget);  navMoved = true; }
+    if (navMoved) {
+      // Adopt a wire-protocol change made via the cursor this same frame.
+      if (this.palette.connType !== this.connType) this.connType = this.palette.connType;
+    }
+    for (let n = 1; n <= 9; n++) {
+      if (input.pressed("Digit" + n) && this.palette.armServiceByIndex(n - 1, navBudget)) {
+        audio.play("place");
+      }
+    }
+    // (Delete/Backspace wire-cut is handled below, after hoverTile is recomputed.)
+
     // ---- Win/lose: once decided, freeze the sim and flip to results after a
     // short beat so the player sees the final frame (T2.4). The sim flips the
     // outcome; the scene owns the end-of-round pause + transition. ----
@@ -239,14 +261,15 @@ export class LevelScene extends Scene {
       this._lastPanY = null;
       this._panning = false;
     }
-    // Arrow / WASD keyboard pan.
+    // WASD keyboard pan. (Arrow keys drive the palette cursor instead — see the
+    // keyboard-palette block above; pan also stays on space/middle drag + wheel.)
     const panSpeed = 420 / cam.zoom;
     let kdx = 0,
       kdy = 0;
-    if (input.isDown("ArrowLeft") || input.isDown("KeyA")) kdx -= 1;
-    if (input.isDown("ArrowRight") || input.isDown("KeyD")) kdx += 1;
-    if (input.isDown("ArrowUp") || input.isDown("KeyW")) kdy -= 1;
-    if (input.isDown("ArrowDown") || input.isDown("KeyS")) kdy += 1;
+    if (input.isDown("KeyA")) kdx -= 1;
+    if (input.isDown("KeyD")) kdx += 1;
+    if (input.isDown("KeyW")) kdy -= 1;
+    if (input.isDown("KeyS")) kdy += 1;
     if (kdx || kdy) {
       cam.x += kdx * panSpeed * dt;
       cam.y += kdy * panSpeed * dt;
@@ -1158,6 +1181,7 @@ export class LevelScene extends Scene {
       ["🎯", "Goal", "Route the target number of guests: gate → compute → database → back."],
       ["🧱", "Build & wire", "Click a service in the bottom bar, then an empty tile. Drag from one service to another to wire — any distance, no adjacency needed."],
       ["✂️", "Delete wire", "Hover a wire — it highlights. Cut it with the Erase tool (left-click), or right-click, or Delete. Left-click is the reliable path on trackpads."],
+      ["⌨️", "Keyboard", "Arrow keys move a cursor over the build bar (Left/Right within a row, Up/Down between wire-type · tabs · tools+services) and select on the move. Keys 1–9 arm the Nth service in the active tab. C cycles the wire type. WASD pans the camera."],
       ["🔌", "Connection types", "Pick the wire type in the bar (or press C): VPC link, VPC Peering, Transit Gateway, PrivateLink. Each prices the hop differently — TGW always adds processing; PrivateLink avoids the cross-AZ penalty but must end at a sink."],
       ["💰", "AWS bill", "Buildings + data transfer burn your budget (top-left). Intra-AZ traffic is FREE; a wire crossing an AZ band (amber) costs 8× per hop. Multi-AZ resilience is real money — keep chatty tiers in one AZ. Don't let the budget hit $0."],
       ["📈", "Waves", "Traffic ramps up in phases (top-right). Add capacity before the peaks arrive."],

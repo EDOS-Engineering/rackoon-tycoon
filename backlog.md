@@ -20,6 +20,20 @@
   exact inverse using `Math.ceil` (+ last-zone clamp). Headless asserts the inverse property over
   many widths; smoke asserts the left-click cut + hover-highlight + the alignment. → `waves/events.js`,
   `scenes/levelScene.js`, `ui/palette.js`, `tooling/{headless,smoke}.mjs`. headless 0; smoke 0/0.
+- **2026-06-17 — Keyboard controls: palette cursor + keyboard wire-delete (feature branch).**
+  The build bar is now fully keyboard-drivable. **Arrow keys** move a cursor over the palette —
+  Left/Right within a row, Up/Down between the three rows (wire-protocol chips · category tabs ·
+  tools+services) — **selecting on the move** (Up/Down lands on the row's currently-active item,
+  so changing rows never accidentally switches tab/protocol). A dashed ring shows the cursor.
+  **Number keys 1–9** jump-arm the Nth service in the active tab. **Delete/Backspace** cuts the
+  wire under the cursor (alongside the existing right-click cut). **Conflict resolved:** WASD +
+  arrows both panned the camera before; arrows now own the palette cursor while **WASD keeps the
+  pan** (pan also still on space/middle drag + wheel — no functional regression). New palette API
+  (`moveCursor`/`armServiceByIndex`/`_rowIds`/`_activeColForRow`/`_selectCursor` + kb cursor
+  state/highlight); levelScene wires the keys; input.js preventDefaults arrows + Backspace.
+  Help legend gains a Keyboard row. Smoke asserts select-by-move (wire/erase/service/tab/protocol),
+  number hotkey, Delete-cut, and the regression guards (WASD pans, arrows don't). → `ui/palette.js`,
+  `scenes/levelScene.js`, `engine/input.js`, `tooling/smoke.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — ACM tile: cert-expiry mitigation (feature branch).** The `cert_expiry`
   incident (edge rejects a share of NEW TLS handshakes) finally has a counter-play: a new
   **AWS Certificate Manager** tile (`acm`, Security tab, $20). It carries `certMitigation: 1`
