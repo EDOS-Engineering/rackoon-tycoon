@@ -6,6 +6,20 @@
 **Status:** Phases 1–6 ✅ **complete.** Feature-complete campaign: **19 levels + sandbox**, every SAA-C03 domain ≥3 boss levels; 24 services / 6 palette tabs; typed connections (VPC/Peering/TGW/PrivateLink) with transitive routing; realistic cross-AZ economy; incidents (AZ failure, traffic spike, cost audit, spot interruption, region failure, + sim-depth: viral spike, dependency outage, noisy neighbor, cert expiry, price hike). **Phase 7 ✅ R-series complete (R1–R6):** the simulation is now a standalone, headless, **seedable-deterministic** core (`sim/simulation.js`) driven by a living-economy **DemandModel** (diurnal/weekly/seasonal + compounding growth), an **Economy** ledger, a seeded escalating **IncidentDeck**, and a new **Company (free-run) mode** with business **milestones** + save/resume. Verified by `tooling/headless.mjs` (fast-run balancing harness) + the Playwright smoke. Stack: zero-dep vanilla. **Next:** T7.6 realism polish; **Phase 8** — the grand pivot: fork into a visual AWS SDK client.
 
 ## Progress log
+- **2026-06-17 — Keyboard controls: palette cursor + keyboard wire-delete (feature branch).**
+  The build bar is now fully keyboard-drivable. **Arrow keys** move a cursor over the palette —
+  Left/Right within a row, Up/Down between the three rows (wire-protocol chips · category tabs ·
+  tools+services) — **selecting on the move** (Up/Down lands on the row's currently-active item,
+  so changing rows never accidentally switches tab/protocol). A dashed ring shows the cursor.
+  **Number keys 1–9** jump-arm the Nth service in the active tab. **Delete/Backspace** cuts the
+  wire under the cursor (alongside the existing right-click cut). **Conflict resolved:** WASD +
+  arrows both panned the camera before; arrows now own the palette cursor while **WASD keeps the
+  pan** (pan also still on space/middle drag + wheel — no functional regression). New palette API
+  (`moveCursor`/`armServiceByIndex`/`_rowIds`/`_activeColForRow`/`_selectCursor` + kb cursor
+  state/highlight); levelScene wires the keys; input.js preventDefaults arrows + Backspace.
+  Help legend gains a Keyboard row. Smoke asserts select-by-move (wire/erase/service/tab/protocol),
+  number hotkey, Delete-cut, and the regression guards (WASD pans, arrows don't). → `ui/palette.js`,
+  `scenes/levelScene.js`, `engine/input.js`, `tooling/smoke.mjs`. headless 0; smoke 0/0.
 - **2026-06-17 — ACM tile: cert-expiry mitigation (feature branch).** The `cert_expiry`
   incident (edge rejects a share of NEW TLS handshakes) finally has a counter-play: a new
   **AWS Certificate Manager** tile (`acm`, Security tab, $20). It carries `certMitigation: 1`
