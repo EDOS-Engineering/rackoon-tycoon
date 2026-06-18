@@ -101,8 +101,18 @@ export class Input {
     window.addEventListener("keydown", (e) => {
       if (!this.keys.has(e.code)) this.keysDown.add(e.code);
       this.keys.add(e.code);
-      // Space is our pan modifier; stop it scrolling the page.
-      if (e.code === "Space") e.preventDefault();
+      // Keys the game consumes that would otherwise scroll the page or navigate
+      // back: Space (pan modifier), Arrows (palette cursor), Backspace (cut wire).
+      if (
+        e.code === "Space" ||
+        e.code === "Backspace" ||
+        e.code === "ArrowUp" ||
+        e.code === "ArrowDown" ||
+        e.code === "ArrowLeft" ||
+        e.code === "ArrowRight"
+      ) {
+        e.preventDefault();
+      }
     });
     window.addEventListener("keyup", (e) => {
       this.keys.delete(e.code);
