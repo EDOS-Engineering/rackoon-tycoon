@@ -1,0 +1,40 @@
+EDOS Source-Available License, version 1.0
+
+Copyright (c) 2026 Enterprise DevOps Solutions, LLC ("EDOS").
+All rights reserved, except as granted below.
+
+The source code of this software is published so that it can be read. It is
+not open-source software.
+
+1. Permitted use. You may view, read and study the source code; fork or clone
+   it, including through the hosting service's fork feature; build and run it
+   on your own machines for personal, non-commercial evaluation, learning or
+   research; and prepare changes for the sole purpose of contributing them to
+   EDOS.
+
+2. Not permitted. Without a separate written agreement with EDOS, you may not:
+   use the software, or any part or modification of it, for commercial
+   purposes or in production; offer it to others as a hosted or managed
+   service; redistribute, sublicense or sell it, in source or compiled form,
+   other than through the hosting service's fork feature; or remove or alter
+   this licence or any copyright notice.
+
+3. Contributions. By submitting a contribution to EDOS, you confirm that you
+   have the right to submit it, and you grant EDOS a perpetual, worldwide,
+   irrevocable, royalty-free licence to use, modify, sublicense and
+   distribute it on any terms.
+
+4. Trademarks. This licence grants no rights to the names, logos or
+   trademarks of EDOS.
+
+5. Termination. Your rights under this licence end automatically if you
+   breach it. On termination you must stop using the software and delete
+   your copies, other than copies the law requires you to keep.
+
+Commercial licensing and enquiries: info@edos.io
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL EDOS
+BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR ITS USE.
